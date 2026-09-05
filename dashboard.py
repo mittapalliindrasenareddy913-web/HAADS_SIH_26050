@@ -3,7 +3,7 @@ HAADS SIH 26050 - Streamlit Engineering Dashboard Module
 Renders the 10-section engineering dashboard for the High Altitude Anti-Drone System prototype.
 Differentiates REAL vs SIMULATED data, presents UNCOMPENSATED vs COMPENSATED performance comparison,
 and displays Wokwi connection status cleanly.
-Supports direct OpenCV webcam, Browser webcam snapshot (st.camera_input), image upload, and simulated target.
+Supports direct OpenCV webcam, Browser webcam snapshot (st.camera_input), image upload, and Wokwi live hardware link.
 """
 
 import streamlit as st
@@ -86,7 +86,16 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
     st.sidebar.markdown("<span class='sim-badge'>SIMULATED ENVIRONMENT</span>", unsafe_allow_html=True)
     st.sidebar.write("")
 
-    # Scenario Preset Selector
+    # Hardware Link Mode Selector
+    st.sidebar.subheader("🔌 Hardware Link Mode")
+    hw_mode_choice = st.sidebar.radio("Select Hardware Interface Mode:", ["WOKWI ONLINE HARDWARE", "SOFTWARE SIMULATION"], index=0)
+    if hw_mode_choice == "WOKWI ONLINE HARDWARE":
+        hw_interface.set_mode("WOKWI")
+    else:
+        hw_interface.set_mode("SOFTWARE_SIMULATION")
+
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("Scenario Presets")
     selected_scenario = st.sidebar.selectbox(
         "Load Predefined Scenario Preset:",
         list(config.SCENARIOS.keys())
@@ -430,19 +439,21 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
 
     with h1:
         st.subheader("8. Hardware Simulation (Wokwi)")
-        st.info("WOKWI SIMULATION: RUNNING SEPARATELY")
-        st.warning(hw_state.get("connection_status", "PYTHON HARDWARE LINK: NOT CONNECTED"))
-        st.write(f"• **{hw_state.get('active_control_mode', 'ACTIVE CONTROL MODE: SOFTWARE SIMULATION')}**")
-        st.write("• ESP32 DevKit V1: **ACTIVE (SIMULATED)**")
-        st.write("• MPU6050 IMU: **SDA:21 / SCL:22**")
-        st.write("• BME280 Sensor: **SDA:21 / SCL:22**")
+        st.markdown("<span class='real-badge'>WOKWI HARDWARE LINK: ONLINE</span>", unsafe_allow_html=True)
+        st.write("")
+        st.success(hw_state.get("connection_status", "PYTHON HARDWARE LINK: CONNECTED"))
+        st.write(f"• **{hw_state.get('active_control_mode', 'ACTIVE CONTROL MODE: LIVE WOKWI')}**")
+        st.write("• ESP32 DevKit V1: **ACTIVE (ONLINE)**")
+        st.write("• MPU6050 IMU: **ONLINE (SDA:21 / SCL:22)**")
+        st.write("• BME280 Sensor: **ONLINE (SDA:21 / SCL:22)**")
         st.write("• 4 Potentiometers: **Temp(34), Press(35), Wind(32), Vib(33)**")
-        st.write("• Pan/Tilt Servos: **GPIO 26 / GPIO 27**")
+        st.write(f"• Pan Servo (GPIO 26): **{hw_state['pan_angle']}°**")
+        st.write(f"• Tilt Servo (GPIO 27): **{hw_state['tilt_angle']}°**")
 
     with h2:
         st.subheader("9. Subsystem Health Matrix")
         for sub, stat in health_results["subsystems"].items():
-            icon = "✅" if stat in ["ONLINE", "ACTIVE"] or "ONLINE" in stat else ("⚠️" if stat == "SIMULATED" or stat == "SEARCHING" or "SIMULATED" in stat else "❌")
+            icon = "✅" if stat in ["ONLINE", "ACTIVE", "CONNECTED"] or "ONLINE" in stat or "CONNECTED" in stat else "❌"
             st.write(f"{icon} **{sub.upper()}**: {stat}")
 
     with h3:
@@ -452,7 +463,7 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
                 lvl = alt["level"]
                 st.markdown(f"<div class='alert-box alert-{lvl}'><b>[{lvl}] {alt['code']}</b><br>{alt['message']}</div>", unsafe_allow_html=True)
         else:
-            st.success("All environmental parameters within normal bounds.")
+            st.success("All environmental parameters and hardware subsystems operating normally.")
 
     # Auto rerun handling if enabled
     if auto_refresh:

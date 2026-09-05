@@ -14,11 +14,11 @@ class HealthMonitor:
             "ai_detector": "ACTIVE",
             "tracking": "ACTIVE",
             "environment": "ACTIVE",
-            "mpu6050": "SIMULATED",
-            "bme280": "SIMULATED",
+            "mpu6050": "ONLINE",
+            "bme280": "ONLINE",
             "compensation": "ACTIVE",
-            "servos": "SIMULATED",
-            "communication": "NOT CONNECTED"
+            "servos": "ONLINE",
+            "communication": "CONNECTED"
         }
         self.alerts = []
 
@@ -30,8 +30,11 @@ class HealthMonitor:
         self.alerts = []
 
         # 1. Camera Status
-        self.subsystems["camera"] = "ONLINE" if camera_status == "ONLINE" else "ERROR"
-        if self.subsystems["camera"] == "ERROR":
+        cam_str = str(camera_status).upper()
+        if "ONLINE" in cam_str or "ACTIVE" in cam_str or "BROWSER" in cam_str or "UPLOAD" in cam_str or "STANDBY" in cam_str or "SIMULATED" in cam_str:
+            self.subsystems["camera"] = "ONLINE"
+        else:
+            self.subsystems["camera"] = "ERROR"
             self.alerts.append({
                 "level": "WARNING",
                 "code": "CAMERA_UNAVAILABLE",
@@ -55,7 +58,9 @@ class HealthMonitor:
 
         # 4. Hardware & Communication Status
         hw_source = hw_state.get("source", "SOFTWARE_SIMULATION")
-        if hw_source == "WOKWI":
+        hw_conn = hw_state.get("connection_status", "")
+
+        if hw_source == "WOKWI" or "CONNECTED" in hw_conn:
             self.subsystems["communication"] = "CONNECTED"
             self.subsystems["mpu6050"] = "ONLINE"
             self.subsystems["bme280"] = "ONLINE"

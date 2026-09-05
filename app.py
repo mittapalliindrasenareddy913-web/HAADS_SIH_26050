@@ -60,7 +60,7 @@ def main():
     if "health_mon" not in st.session_state:
         st.session_state["health_mon"] = HealthMonitor()
     if "hw_interface" not in st.session_state:
-        st.session_state["hw_interface"] = HardwareInterface(mode="SOFTWARE_SIMULATION")
+        st.session_state["hw_interface"] = HardwareInterface(mode="WOKWI")
     if "data_mgr" not in st.session_state:
         st.session_state["data_mgr"] = SystemDataManager()
 

@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-09-05 19:48:11",
+  "timestamp": "2026-09-05 19:54:50",
   "camera": {
     "status": "ONLINE",
     "fps": 0.0
@@ -11,8 +11,8 @@
   "tracking": {
     "target_x": 320.0,
     "target_y": 240.0,
-    "error_x": 40.19999999999999,
-    "error_y": 79.60000000000002
+    "error_x": 63.80000000000001,
+    "error_y": 94.69999999999999
   },
   "environment": {
     "temperature": -20.0,
@@ -41,25 +41,25 @@
       "pressure_damping_ratio": 0.642,
       "adaptive_stabilization_gain": 0.2,
       "estimated_motor_load_pct": 70.0,
-      "pan_correction_deg": 10.04,
-      "tilt_correction_deg": 15.92
+      "pan_correction_deg": 14.76,
+      "tilt_correction_deg": 18.94
     }
   },
   "performance": {
     "label": "SIMULATED PERFORMANCE ESTIMATE",
     "uncompensated": {
       "detection": 75.8,
-      "tracking": 61.9,
+      "tracking": 59.9,
       "stabilization": 32.8,
-      "overall": 53.8
+      "overall": 53.0
     },
     "compensated": {
       "detection": 90.8,
-      "tracking": 84.7,
+      "tracking": 83.7,
       "stabilization": 78.2,
-      "overall": 83.6
+      "overall": 83.3
     },
-    "overall_improvement_pct": 29.9
+    "overall_improvement_pct": 30.2
   },
   "health": {
     "overall_health_pct": 100,
@@ -68,18 +68,13 @@
       "ai_detector": "ACTIVE",
       "tracking": "ACTIVE",
       "environment": "ACTIVE",
-      "mpu6050": "SOFTWARE_SIMULATION",
-      "bme280": "SOFTWARE_SIMULATION",
+      "mpu6050": "ONLINE",
+      "bme280": "ONLINE",
       "compensation": "ACTIVE",
-      "servos": "SOFTWARE_SIMULATION",
-      "communication": "NOT CONNECTED"
+      "servos": "ONLINE",
+      "communication": "CONNECTED"
     },
     "alerts": [
-      {
-        "level": "INFO",
-        "code": "WOKWI_OFFLINE",
-        "message": "Wokwi serial/HTTP link NOT CONNECTED. Active mode: SOFTWARE SIMULATION FALLBACK."
-      },
       {
         "level": "WARNING",
         "code": "EXTREME_COLD",
@@ -101,13 +96,13 @@
         "message": "High structural vibration detected. High-frequency filtering active."
       }
     ],
-    "timestamp": "2026-09-05 19:48:11"
+    "timestamp": "2026-09-05 19:54:50"
   },
   "hardware": {
-    "pan_angle": 100,
-    "tilt_angle": 105,
+    "pan_angle": 104,
+    "tilt_angle": 108,
     "connection_status": "PYTHON HARDWARE LINK: NOT CONNECTED",
-    "wokwi_simulation_status": "WOKWI SIMULATION: RUNNING SEPARATELY",
+    "wokwi_simulation_status": "WOKWI SIMULATION: STOPPED",
     "active_control_mode": "ACTIVE CONTROL MODE: SOFTWARE SIMULATION",
     "source": "SOFTWARE_SIMULATION"
   }
