@@ -1,0 +1,105 @@
+{
+  "version": 1,
+  "author": "Antigravity - SIH 26050 Team",
+  "editor": "wokwi",
+  "parts": [
+    {
+      "type": "wokwi-esp32-devkit-v1",
+      "id": "esp",
+      "top": 0,
+      "left": 0,
+      "attrs": {}
+    },
+    {
+      "type": "wokwi-mpu6050",
+      "id": "imu",
+      "top": -140,
+      "left": -180,
+      "attrs": { "label": "MPU6050 (IMU - I2C 0x68)" }
+    },
+    {
+      "type": "wokwi-bme280",
+      "id": "bme",
+      "top": -140,
+      "left": 180,
+      "attrs": { "label": "BME280 (Temp/Press Sensor - I2C 0x76)" }
+    },
+    {
+      "type": "wokwi-potentiometer",
+      "id": "pot_temp",
+      "top": 200,
+      "left": -250,
+      "attrs": { "label": "Temperature (-30 to +30 C)" }
+    },
+    {
+      "type": "wokwi-potentiometer",
+      "id": "pot_press",
+      "top": 200,
+      "left": -100,
+      "attrs": { "label": "Pressure (500 to 1000 hPa)" }
+    },
+    {
+      "type": "wokwi-potentiometer",
+      "id": "pot_wind",
+      "top": 200,
+      "left": 50,
+      "attrs": { "label": "Wind Speed (0 to 60 km/h)" }
+    },
+    {
+      "type": "wokwi-potentiometer",
+      "id": "pot_vib",
+      "top": 200,
+      "left": 200,
+      "attrs": { "label": "Vibration (LOW-MED-HIGH)" }
+    },
+    {
+      "type": "wokwi-servo",
+      "id": "pan_servo",
+      "top": -260,
+      "left": -60,
+      "attrs": { "label": "Pan Servo (GPIO 26)" }
+    },
+    {
+      "type": "wokwi-servo",
+      "id": "tilt_servo",
+      "top": -260,
+      "left": 100,
+      "attrs": { "label": "Tilt Servo (GPIO 27)" }
+    }
+  ],
+  "connections": [
+    [ "esp:GND.1", "imu:GND", "black", [ "v0" ] ],
+    [ "esp:3V3", "imu:VCC", "red", [ "v0" ] ],
+    [ "esp:21", "imu:SDA", "green", [ "v0" ] ],
+    [ "esp:22", "imu:SCL", "yellow", [ "v0" ] ],
+
+    [ "esp:GND.1", "bme:GND", "black", [ "v0" ] ],
+    [ "esp:3V3", "bme:VIN", "red", [ "v0" ] ],
+    [ "esp:21", "bme:SDA", "green", [ "v0" ] ],
+    [ "esp:22", "bme:SCL", "yellow", [ "v0" ] ],
+
+    [ "esp:GND.1", "pot_temp:GND", "black", [ "v0" ] ],
+    [ "esp:3V3", "pot_temp:VCC", "red", [ "v0" ] ],
+    [ "esp:34", "pot_temp:SIG", "blue", [ "v0" ] ],
+
+    [ "esp:GND.1", "pot_press:GND", "black", [ "v0" ] ],
+    [ "esp:3V3", "pot_press:VCC", "red", [ "v0" ] ],
+    [ "esp:35", "pot_press:SIG", "blue", [ "v0" ] ],
+
+    [ "esp:GND.1", "pot_wind:GND", "black", [ "v0" ] ],
+    [ "esp:3V3", "pot_wind:VCC", "red", [ "v0" ] ],
+    [ "esp:32", "pot_wind:SIG", "blue", [ "v0" ] ],
+
+    [ "esp:GND.1", "pot_vib:GND", "black", [ "v0" ] ],
+    [ "esp:3V3", "pot_vib:VCC", "red", [ "v0" ] ],
+    [ "esp:33", "pot_vib:SIG", "blue", [ "v0" ] ],
+
+    [ "esp:GND.1", "pan_servo:GND", "black", [ "v0" ] ],
+    [ "esp:5V", "pan_servo:V+", "red", [ "v0" ] ],
+    [ "esp:26", "pan_servo:PWM", "orange", [ "v0" ] ],
+
+    [ "esp:GND.1", "tilt_servo:GND", "black", [ "v0" ] ],
+    [ "esp:5V", "tilt_servo:V+", "red", [ "v0" ] ],
+    [ "esp:27", "tilt_servo:PWM", "orange", [ "v0" ] ]
+  ]
+}

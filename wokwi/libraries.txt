@@ -1,0 +1,5 @@
+# Wokwi Arduino Library Dependencies
+ESP32Servo
+Adafruit MPU6050
+Adafruit Unified Sensor
+Adafruit BME280 Library
