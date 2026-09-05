@@ -1,32 +1,27 @@
 {
-  "timestamp": "2026-09-05 19:36:40",
+  "timestamp": "2026-09-05 19:48:11",
   "camera": {
     "status": "ONLINE",
-    "fps": 0.3
+    "fps": 0.0
   },
   "detection": {
     "model_name": "YOLO26n Edge AI \u2014 Object Detection & Tracking",
-    "object_count": 0,
-    "target_class": "N/A",
-    "confidence": 0.0,
-    "bbox": [],
-    "track_id": null
+    "object_count": 1
   },
   "tracking": {
     "target_x": 320.0,
     "target_y": 240.0,
-    "error_x": 0.0,
-    "error_y": 0.0,
-    "trajectory": []
+    "error_x": 40.19999999999999,
+    "error_y": 79.60000000000002
   },
   "environment": {
-    "temperature": 20.0,
-    "pressure": 950.0,
-    "wind_speed": 5.0,
-    "vibration": "LOW",
-    "air_density_kg_m3": 1.1289,
+    "temperature": -20.0,
+    "pressure": 650.0,
+    "wind_speed": 40.0,
+    "vibration": "HIGH",
+    "air_density_kg_m3": 0.8945,
     "source": "SOFTWARE_SIMULATION",
-    "active_scenario": "MODE 1 \u2014 NORMAL",
+    "active_scenario": "MODE 4 \u2014 EXTREME COMBINED",
     "label": "SIMULATED ENVIRONMENT"
   },
   "compensation": {
@@ -38,33 +33,33 @@
       "vibration": true
     },
     "metrics": {
-      "temp_stiffness_factor": 1.0,
-      "sensor_drift_deg_s": 0.0,
-      "aerodynamic_drag_n": 0.0544,
-      "wind_deflection_px": 1.2,
-      "vibration_multiplier": 1.0,
-      "pressure_damping_ratio": 0.938,
-      "adaptive_stabilization_gain": 0.1612,
-      "estimated_motor_load_pct": 23.8,
-      "pan_correction_deg": 0.2,
-      "tilt_correction_deg": 0.0
+      "temp_stiffness_factor": 1.5,
+      "sensor_drift_deg_s": 1.67,
+      "aerodynamic_drag_n": 2.7608,
+      "wind_deflection_px": 10.0,
+      "vibration_multiplier": 1.8,
+      "pressure_damping_ratio": 0.642,
+      "adaptive_stabilization_gain": 0.2,
+      "estimated_motor_load_pct": 70.0,
+      "pan_correction_deg": 10.04,
+      "tilt_correction_deg": 15.92
     }
   },
   "performance": {
     "label": "SIMULATED PERFORMANCE ESTIMATE",
     "uncompensated": {
-      "detection": 98.0,
-      "tracking": 93.0,
-      "stabilization": 92.4,
-      "overall": 94.0
+      "detection": 75.8,
+      "tracking": 61.9,
+      "stabilization": 32.8,
+      "overall": 53.8
     },
     "compensated": {
-      "detection": 98.0,
-      "tracking": 95.4,
-      "stabilization": 96.2,
-      "overall": 96.4
+      "detection": 90.8,
+      "tracking": 84.7,
+      "stabilization": 78.2,
+      "overall": 83.6
     },
-    "overall_improvement_pct": 2.4
+    "overall_improvement_pct": 29.9
   },
   "health": {
     "overall_health_pct": 100,
@@ -84,14 +79,36 @@
         "level": "INFO",
         "code": "WOKWI_OFFLINE",
         "message": "Wokwi serial/HTTP link NOT CONNECTED. Active mode: SOFTWARE SIMULATION FALLBACK."
+      },
+      {
+        "level": "WARNING",
+        "code": "EXTREME_COLD",
+        "message": "Sub-zero extreme cold (-20.0\u00b0C). Mechanical stiffness compensation active."
+      },
+      {
+        "level": "WARNING",
+        "code": "HIGH_WIND_SHEAR",
+        "message": "High wind shear detected (40.0 km/h). Adaptive stabilization gain boosted."
+      },
+      {
+        "level": "CRITICAL",
+        "code": "EXTREME_COMBINED_HAZARD",
+        "message": "Critical severe high-altitude hazard! Extreme cold combined with high wind shear."
+      },
+      {
+        "level": "WARNING",
+        "code": "HIGH_VIBRATION",
+        "message": "High structural vibration detected. High-frequency filtering active."
       }
     ],
-    "timestamp": "2026-09-05 19:36:40"
+    "timestamp": "2026-09-05 19:48:11"
   },
   "hardware": {
-    "pan_angle": 90,
-    "tilt_angle": 90,
-    "connection_status": "WOKWI CONNECTION: NOT CONNECTED (FALLBACK ACTIVE)",
+    "pan_angle": 100,
+    "tilt_angle": 105,
+    "connection_status": "PYTHON HARDWARE LINK: NOT CONNECTED",
+    "wokwi_simulation_status": "WOKWI SIMULATION: RUNNING SEPARATELY",
+    "active_control_mode": "ACTIVE CONTROL MODE: SOFTWARE SIMULATION",
     "source": "SOFTWARE_SIMULATION"
   }
 }

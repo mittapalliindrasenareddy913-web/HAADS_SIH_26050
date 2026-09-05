@@ -3,7 +3,7 @@ HAADS SIH 26050 - Streamlit Engineering Dashboard Module
 Renders the 10-section engineering dashboard for the High Altitude Anti-Drone System prototype.
 Differentiates REAL vs SIMULATED data, presents UNCOMPENSATED vs COMPENSATED performance comparison,
 and displays Wokwi connection status cleanly.
-Supports both direct OpenCV webcam capture and Browser WebRTC webcam capture.
+Supports direct OpenCV webcam, Browser webcam snapshot (st.camera_input), image upload, and simulated target.
 """
 
 import streamlit as st
@@ -27,6 +27,29 @@ from performance import PerformanceEngine
 from health_monitor import HealthMonitor
 from hardware_interface import HardwareInterface
 from data_manager import SystemDataManager
+
+
+def create_synthetic_target_frame(target_x, target_y):
+    """Generates a synthetic high-contrast drone target frame for simulation fallback."""
+    frame = np.zeros((480, 640, 3), dtype=np.uint8)
+    # Background grid
+    for y in range(0, 480, 40):
+        cv2.line(frame, (0, y), (640, y), (25, 30, 35), 1)
+    for x in range(0, 640, 40):
+        cv2.line(frame, (x, 0), (x, 480), (25, 30, 35), 1)
+
+    tx, ty = int(target_x), int(target_y)
+    # Draw Quadcopter Drone Target
+    cv2.circle(frame, (tx, ty), 12, (0, 200, 255), -1)
+    cv2.line(frame, (tx - 35, ty - 25), (tx + 35, ty + 25), (180, 180, 180), 3)
+    cv2.line(frame, (tx - 35, ty + 25), (tx + 35, ty - 25), (180, 180, 180), 3)
+    for rx, ry in [(tx - 35, ty - 25), (tx + 35, ty - 25), (tx - 35, ty + 25), (tx + 35, ty + 25)]:
+        cv2.circle(frame, (rx, ry), 15, (0, 255, 255), 2)
+        cv2.circle(frame, (rx, ry), 4, (0, 255, 255), -1)
+
+    cv2.putText(frame, "SIMULATED DRONE TARGET", (tx - 75, max(20, ty - 35)),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 255), 1)
+    return frame
 
 
 def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_engine, health_mon, hw_interface, data_mgr):
@@ -91,16 +114,87 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
     comp_engine.enable_pressure_comp = st.sidebar.checkbox("Enable Pressure Compensation", value=comp_engine.enable_pressure_comp)
     comp_engine.enable_vibration_comp = st.sidebar.checkbox("Enable Vibration Compensation", value=comp_engine.enable_vibration_comp)
 
+    st.sidebar.markdown("---")
+    st.sidebar.subheader("Dashboard Refresh Settings")
+    auto_refresh = st.sidebar.checkbox("🔄 Enable Auto Live Refresh Loop", value=False, help="Continuously re-runs the dashboard loop when active.")
+
+    # ----------------------------------------------------
+    # SECTION 2 PRE-READ & INPUT SELECTION
+    # ----------------------------------------------------
+    input_tab1, input_tab2, input_tab3 = st.tabs([
+        "📷 Browser Webcam Input", 
+        "📁 Upload Image File", 
+        "🎯 Synthetic Drone Target"
+    ])
+
+    frame = None
+    cam_source = "SIMULATED TARGET"
+    cam_status_str = "SIMULATED (STANDBY)"
+
+    # Check local hardware camera first (if running on local machine with webcam attached)
+    local_cam_success, local_frame = camera_mgr.get_frame()
+    if local_cam_success and local_frame is not None and camera_mgr.status == "ONLINE":
+        frame = local_frame
+        cam_source = "LOCAL WEBCAM"
+        cam_status_str = f"ONLINE (LOCAL WEBCAM - {camera_mgr.fps:.1f} FPS)"
+
+    with input_tab1:
+        st.markdown("<span class='real-badge'>LIVE BROWSER CAMERA INPUT</span>", unsafe_allow_html=True)
+        st.caption("Point your laptop or phone camera at an object (phone, drone, cup, person, bottle) to detect and track in real-time.")
+        cam_img_buffer = st.camera_input("Take Photo / Scan Target with Camera", key="browser_cam_input")
+        if cam_img_buffer is not None:
+            bytes_data = cam_img_buffer.getvalue()
+            file_bytes = np.frombuffer(bytes_data, np.uint8)
+            decoded_frame = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+            if decoded_frame is not None:
+                frame = cv2.resize(decoded_frame, (640, 480))
+                cam_source = "BROWSER WEBCAM"
+                cam_status_str = "ONLINE (BROWSER CAMERA)"
+
+    with input_tab2:
+        st.markdown("<span class='real-badge'>IMAGE FILE UPLOAD</span>", unsafe_allow_html=True)
+        uploaded_file = st.file_uploader("Upload Drone or Target Image", type=["jpg", "jpeg", "png"], key="image_file_uploader")
+        if uploaded_file is not None:
+            bytes_data = uploaded_file.getvalue()
+            file_bytes = np.frombuffer(bytes_data, np.uint8)
+            decoded_frame = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+            if decoded_frame is not None:
+                frame = cv2.resize(decoded_frame, (640, 480))
+                cam_source = "UPLOADED IMAGE"
+                cam_status_str = "ONLINE (IMAGE UPLOAD)"
+
+    with input_tab3:
+        st.markdown("<span class='sim-badge'>SYNTHETIC TARGET GENERATOR</span>", unsafe_allow_html=True)
+        sim_target_x = st.slider("Simulated Target X Position", 50, 590, 420, key="sim_tx")
+        sim_target_y = st.slider("Simulated Target Y Position", 50, 430, 180, key="sim_ty")
+        if frame is None or cam_source == "SIMULATED TARGET":
+            frame = create_synthetic_target_frame(sim_target_x, sim_target_y)
+            cam_source = "SIMULATED TARGET"
+            cam_status_str = "SIMULATED TARGET (STANDBY)"
+
+    # Final fallback frame check
+    if frame is None:
+        frame = create_synthetic_target_frame(420, 180)
+
     # ----------------------------------------------------
     # SYSTEM PIPELINE EXECUTION
     # ----------------------------------------------------
-    # 1. Read real webcam frame
-    cam_success, frame = camera_mgr.get_frame()
+    # 1. Run YOLO26n Edge AI inference on frame
+    raw_detections = detector.detect(frame) if detector.model_loaded else []
 
-    # 2. Run YOLO26n Edge AI inference on frame
-    raw_detections = detector.detect(frame) if (cam_success and frame is not None) else []
+    # If simulated target frame is active and YOLO returned no detections, synthesize target entry
+    if len(raw_detections) == 0 and cam_source == "SIMULATED TARGET":
+        raw_detections = [{
+            "bbox": [sim_target_x - 30, sim_target_y - 20, sim_target_x + 30, sim_target_y + 20],
+            "center": (float(sim_target_x), float(sim_target_y)),
+            "width": 60.0,
+            "height": 40.0,
+            "confidence": 0.94,
+            "class_id": 0,
+            "class_name": "micro_drone"
+        }]
 
-    # 3. Object tracking
+    # 2. Object tracking
     active_tracks = tracker.update(raw_detections)
     primary_target = tracker.get_primary_target()
 
@@ -122,31 +216,31 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
         target_cls = "N/A"
         bbox = []
 
-    # 4. Environmental state & compensation calculations
+    # 3. Environmental state & compensation calculations
     env_state = env_sim.get_state()
     comp_state = comp_engine.calculate_compensation(env_state, error_x, error_y)
 
-    # 5. Virtual Pan/Tilt Calculation
+    # 4. Virtual Pan/Tilt Calculation
     base_pan, base_tilt = 90, 90
     pan_calc = base_pan + comp_state["metrics"]["pan_correction_deg"]
     tilt_calc = base_tilt + comp_state["metrics"]["tilt_correction_deg"]
 
     hw_state = hw_interface.send_pan_tilt(pan_calc, tilt_calc)
 
-    # 6. Performance Evaluation
+    # 5. Performance Evaluation
     target_error_dist = math.hypot(error_x, error_y)
     perf_results = perf_engine.evaluate_performance(env_state, comp_state, target_error_dist)
 
-    # 7. Health & Alerts
+    # 6. Health & Alerts
     health_results = health_mon.update_health(
-        camera_mgr.status, detector.model_loaded, len(active_tracks),
+        cam_status_str, detector.model_loaded, len(active_tracks),
         env_state, hw_state, perf_results
     )
 
-    # 8. Update system_data.json
+    # 7. Update system_data.json
     full_state_data = {
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-        "camera": {"status": camera_mgr.status, "fps": round(camera_mgr.fps, 1)},
+        "camera": {"status": cam_status_str, "fps": round(camera_mgr.fps, 1), "source": cam_source},
         "detection": {
             "model_name": detector.model_name,
             "object_count": len(raw_detections),
@@ -176,11 +270,11 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
     with ov1:
         st.metric("System Mode", "PROTOTYPE", help="Academic Engineering Prototype (Non-destructive)")
     with ov2:
-        st.metric("System Health", f"{health_results['overall_health_pct']}%", delta=None)
+        st.metric("System Health", f"{health_results['overall_health_pct']}%")
     with ov3:
-        st.metric("Webcam Status / FPS", f"{camera_mgr.status} ({camera_mgr.fps:.1f} FPS)", help="REAL Laptop Webcam")
+        st.metric("Camera Feed", cam_source, help=f"Status: {cam_status_str}")
     with ov4:
-        st.metric("Objects Tracked", len(active_tracks), help="YOLO26n Detections")
+        st.metric("Objects Tracked", len(active_tracks), help="YOLO26n Active Detections")
     with ov5:
         st.metric("Overall Performance", f"{perf_results['compensated']['overall']}%", delta=f"+{perf_results['overall_improvement_pct']}% Comp")
 
@@ -193,25 +287,19 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
 
     with col_left:
         st.subheader("2. Real-Time Camera & YOLO26n Edge AI Tracking")
-        st.markdown("<span class='real-badge'>REAL LAPTOP WEBCAM INPUT</span>", unsafe_allow_html=True)
+        if "REAL" in cam_source or "WEBCAM" in cam_source or "CAMERA" in cam_source or "UPLOAD" in cam_source:
+            st.markdown(f"<span class='real-badge'>ACTIVE FEED: {cam_source}</span>", unsafe_allow_html=True)
+        else:
+            st.markdown(f"<span class='sim-badge'>ACTIVE FEED: {cam_source}</span>", unsafe_allow_html=True)
         st.write("")
 
-        # WebRTC Browser Camera Streamer option for remote browser access
-        if WEBRTC_AVAILABLE:
-            with st.expander("🎥 Click to Start Browser Webcam Streamer (For Website Access)", expanded=False):
-                st.caption("Streams your browser tab's camera directly to YOLO26n Edge AI detection engine.")
-                webrtc_streamer(
-                    key="haads-browser-webcam",
-                    rtc_configuration=RTCConfiguration({"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]})
-                )
-
         # Draw bounding boxes and trajectory on frame
-        annotated_frame = frame.copy() if (frame is not None) else camera_mgr.get_fallback_frame()
+        annotated_frame = frame.copy()
 
         # Draw crosshair frame center (320, 240)
         cv2.line(annotated_frame, (320, 220), (320, 260), (0, 255, 0), 1)
         cv2.line(annotated_frame, (300, 240), (340, 240), (0, 255, 0), 1)
-        cv2.putText(annotated_frame, "CENTER", (325, 235), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0), 1)
+        cv2.putText(annotated_frame, "CENTER (320,240)", (325, 235), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0), 1)
 
         # Draw tracks
         for track in active_tracks:
@@ -229,13 +317,21 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
                 cv2.polylines(annotated_frame, [pts], isClosed=False, color=(0, 255, 255), thickness=2)
 
             # Error Line from Center
-            cv2.line(annotated_frame, (320, 240), (int(track.target_x), int(track.target_y)), (0, 165, 255), 1)
+            cv2.line(annotated_frame, (320, 240), (int(track.target_x), int(track.target_y)), (0, 165, 255), 2)
 
         # Convert BGR to RGB for Streamlit display
         rgb_frame = cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB)
         st.image(rgb_frame, channels="RGB", use_container_width=True)
 
-        st.caption(f"Model: {detector.model_name} | Inference Time: {detector.last_inference_time_ms:.1f} ms")
+        st.caption(f"Model: {detector.model_name} | Inference Time: {detector.last_inference_time_ms:.1f} ms | Source: {cam_source}")
+
+        # WebRTC Streamer Option (if installed)
+        if WEBRTC_AVAILABLE:
+            with st.expander("🎥 Optional WebRTC Live Streamer (Advanced)", expanded=False):
+                webrtc_streamer(
+                    key="haads-browser-webcam-rtc",
+                    rtc_configuration=RTCConfiguration({"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]})
+                )
 
     with col_right:
         st.subheader("3. Simulated Environment")
@@ -276,6 +372,7 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
         st.subheader("5. Tracking & Virtual Pointing")
         st.markdown("<span class='sim-badge'>VIRTUAL CAMERA POINTING</span>", unsafe_allow_html=True)
         st.write("")
+        st.write(f"• Primary Target: **{target_cls} (ID-{track_id})**")
         st.write(f"• Target Center: **X={target_x:.1f}, Y={target_y:.1f}**")
         st.write(f"• Pointing Error X: **{error_x:+.1f} px**")
         st.write(f"• Pointing Error Y: **{error_y:+.1f} px**")
@@ -345,7 +442,7 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
     with h2:
         st.subheader("9. Subsystem Health Matrix")
         for sub, stat in health_results["subsystems"].items():
-            icon = "✅" if stat in ["ONLINE", "ACTIVE"] else ("⚠️" if stat == "SIMULATED" or stat == "SEARCHING" else "❌")
+            icon = "✅" if stat in ["ONLINE", "ACTIVE"] or "ONLINE" in stat else ("⚠️" if stat == "SIMULATED" or stat == "SEARCHING" or "SIMULATED" in stat else "❌")
             st.write(f"{icon} **{sub.upper()}**: {stat}")
 
     with h3:
@@ -357,6 +454,10 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
         else:
             st.success("All environmental parameters within normal bounds.")
 
-    # Refresh button / Auto loop indicator
-    time.sleep(0.05)
-    st.experimental_rerun() if hasattr(st, 'experimental_rerun') else None
+    # Auto rerun handling if enabled
+    if auto_refresh:
+        time.sleep(1.0)
+        if hasattr(st, 'rerun'):
+            st.rerun()
+        elif hasattr(st, 'experimental_rerun'):
+            st.experimental_rerun()
