@@ -3,6 +3,7 @@ HAADS SIH 26050 - Streamlit Engineering Dashboard Module
 Renders the 10-section engineering dashboard for the High Altitude Anti-Drone System prototype.
 Differentiates REAL vs SIMULATED data, presents UNCOMPENSATED vs COMPENSATED performance comparison,
 and displays Wokwi connection status cleanly.
+Supports both direct OpenCV webcam capture and Browser WebRTC webcam capture.
 """
 
 import streamlit as st
@@ -12,6 +13,12 @@ import time
 import os
 import math
 import numpy as np
+
+try:
+    from streamlit_webrtc import webrtc_streamer, RTCConfiguration, VideoProcessorBase
+    WEBRTC_AVAILABLE = True
+except ImportError:
+    WEBRTC_AVAILABLE = False
 
 import config
 from environment import EnvironmentSimulator
@@ -188,6 +195,15 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
         st.subheader("2. Real-Time Camera & YOLO26n Edge AI Tracking")
         st.markdown("<span class='real-badge'>REAL LAPTOP WEBCAM INPUT</span>", unsafe_allow_html=True)
         st.write("")
+
+        # WebRTC Browser Camera Streamer option for remote browser access
+        if WEBRTC_AVAILABLE:
+            with st.expander("🎥 Click to Start Browser Webcam Streamer (For Website Access)", expanded=False):
+                st.caption("Streams your browser tab's camera directly to YOLO26n Edge AI detection engine.")
+                webrtc_streamer(
+                    key="haads-browser-webcam",
+                    rtc_configuration=RTCConfiguration({"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]})
+                )
 
         # Draw bounding boxes and trajectory on frame
         annotated_frame = frame.copy() if (frame is not None) else camera_mgr.get_fallback_frame()
