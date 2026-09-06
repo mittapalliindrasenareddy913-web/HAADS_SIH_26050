@@ -10,7 +10,7 @@ import numpy as np
 
 
 PHONE_KEYWORDS = ["phone link", "mittapalli", "android", "iphone", "mobile", "phone", "remote camera", "continuity", "virtual"]
-LAPTOP_KEYWORDS = ["integrated", "built-in", "hd webcam", "hd camera", "laptop", "webcam", "internal"]
+LAPTOP_KEYWORDS = ["integrated camera", "built-in camera", "integrated webcam", "hd webcam", "hd camera", "laptop camera", "webcam", "internal camera", "integrated", "built-in"]
 
 def filter_camera_devices(device_list, is_mobile=False):
     """

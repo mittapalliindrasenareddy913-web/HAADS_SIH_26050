@@ -30,23 +30,29 @@ class HealthMonitor:
         """
         self.alerts = []
 
-        # 1. Camera Subsystem Status
-        if isinstance(camera_status, bool):
-            cam_str = "ONLINE" if camera_status else "OFFLINE"
-        else:
-            cam_str = str(camera_status or "OFFLINE").upper()
+        # 1. Camera Subsystem Status (Exact Single Source of Truth)
+        c_status = str(camera_status or "OFFLINE").strip().upper()
 
-        if "ONLINE" in cam_str:
+        if c_status in ["ONLINE", "ONLINE (LIVE WEBCAM)", "ONLINE (SIMULATED)"]:
             self.subsystems["camera"] = "ONLINE"
-        elif "WAITING FOR PERMISSION" in cam_str:
+        elif c_status in ["WAITING FOR PERMISSION", "WAITING_FOR_PERMISSION"]:
             self.subsystems["camera"] = "WAITING FOR PERMISSION"
-        elif "PERMISSION" in cam_str:
+        elif c_status in ["INITIALIZING", "CONNECTING", "WAITING"]:
+            self.subsystems["camera"] = "INITIALIZING"
+        elif c_status in ["PERMISSION DENIED", "PERMISSION_DENIED"]:
             self.subsystems["camera"] = "PERMISSION DENIED"
-        elif "WAITING" in cam_str:
-            self.subsystems["camera"] = "WAITING"
-        elif "NO DEVICE" in cam_str or "DEVICE" in cam_str:
+            self.alerts.append({
+                "level": "WARNING",
+                "code": "CAMERA_PERMISSION_DENIED",
+                "message": "Browser camera permission was denied. Please allow camera access in your browser address bar."
+            })
+        elif c_status in ["NO DEVICE", "NO_DEVICE"]:
             self.subsystems["camera"] = "NO DEVICE"
-        elif "ERROR" in cam_str:
+        elif c_status in ["DEVICE BUSY", "DEVICE_BUSY"]:
+            self.subsystems["camera"] = "DEVICE BUSY"
+        elif c_status in ["IFRAME BLOCKED", "IFRAME_BLOCKED"]:
+            self.subsystems["camera"] = "IFRAME BLOCKED"
+        elif "ERROR" in c_status:
             self.subsystems["camera"] = "ERROR"
             self.alerts.append({
                 "level": "WARNING",
@@ -54,7 +60,7 @@ class HealthMonitor:
                 "message": "Webcam stream unavailable or disconnected."
             })
         else:
-            self.subsystems["camera"] = "OFFLINE"
+            self.subsystems["camera"] = c_status
 
         # 2. AI Detector Status
         if isinstance(detector_status, bool):
