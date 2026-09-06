@@ -3,7 +3,7 @@ HAADS SIH 26050 - Hardware Interface Abstraction Module
 Provides MQTT-based telemetry link with Wokwi ESP32 Hardware Simulation,
 plus HTTP test endpoint fallback. Implements genuine 5-second heartbeat state machine:
 WOKWI_OFFLINE, WOKWI_CONNECTING, WOKWI_ONLINE.
-Uses persistent module-level MQTT singleton client safe across Streamlit reruns.
+Includes persistent singleton MQTT background network loop and detailed MQTT diagnostics.
 """
 
 import time
@@ -22,10 +22,14 @@ except ImportError:
 
 WOKWI_ONLINE_TIMEOUT = 5.0  # seconds
 
-# Global persistent MQTT singleton state
+# Global persistent MQTT singleton state & diagnostics
 _GLOBAL_MQTT_CLIENT = None
 _GLOBAL_MQTT_LOCK = threading.Lock()
+_GLOBAL_MQTT_CONN_STATUS = "DISCONNECTED"
+_GLOBAL_MQTT_CONN_ERROR = None
+_GLOBAL_MQTT_MESSAGE_COUNT = 0
 _GLOBAL_LAST_HEARTBEAT_TIME = 0.0
+_GLOBAL_LAST_PAYLOAD = None
 _GLOBAL_LAST_TELEMETRY = {
     "device": "wokwi-esp32",
     "temperature": 20.0,
@@ -39,42 +43,63 @@ _GLOBAL_LAST_TELEMETRY = {
 
 
 def _ensure_mqtt_singleton(broker="broker.hivemq.com", port=1883, topic="isr/sih/26050/telemetry"):
-    global _GLOBAL_MQTT_CLIENT
+    global _GLOBAL_MQTT_CLIENT, _GLOBAL_MQTT_CONN_STATUS, _GLOBAL_MQTT_CONN_ERROR
     with _GLOBAL_MQTT_LOCK:
         if _GLOBAL_MQTT_CLIENT is None and MQTT_AVAILABLE:
             def on_connect(client, userdata, flags, rc, properties=None):
+                global _GLOBAL_MQTT_CONN_STATUS, _GLOBAL_MQTT_CONN_ERROR
                 if rc == 0:
+                    _GLOBAL_MQTT_CONN_STATUS = "CONNECTED"
+                    _GLOBAL_MQTT_CONN_ERROR = None
                     try:
                         client.subscribe(topic)
                         print(f"[HardwareInterface] Persistent MQTT Client Subscribed to '{topic}'.")
                     except Exception as e:
                         print(f"[HardwareInterface] Subscribe note: {e}")
                 else:
-                    print(f"[HardwareInterface] MQTT Connect failed with code {rc}.")
+                    _GLOBAL_MQTT_CONN_STATUS = f"DISCONNECTED (RC={rc})"
+                    _GLOBAL_MQTT_CONN_ERROR = f"Connect failed with code {rc}"
+
+            def on_disconnect(client, userdata, rc, properties=None):
+                global _GLOBAL_MQTT_CONN_STATUS
+                _GLOBAL_MQTT_CONN_STATUS = f"DISCONNECTED (Code={rc})"
 
             def on_message(client, userdata, msg):
-                global _GLOBAL_LAST_HEARTBEAT_TIME
+                global _GLOBAL_LAST_HEARTBEAT_TIME, _GLOBAL_MQTT_MESSAGE_COUNT, _GLOBAL_LAST_PAYLOAD
                 try:
                     payload_str = msg.payload.decode("utf-8")
                     data = json.loads(payload_str)
-                    _GLOBAL_LAST_HEARTBEAT_TIME = time.time()
+                    
+                    # Validate payload
                     if isinstance(data, dict):
-                        _GLOBAL_LAST_TELEMETRY.update(data)
-                except Exception:
+                        dev = data.get("device", "")
+                        stat = data.get("status", "")
+                        has_fields = "temperature" in data or "temp" in data or "pressure" in data
+                        
+                        if dev == "wokwi-esp32" or stat == "online" or has_fields:
+                            _GLOBAL_LAST_HEARTBEAT_TIME = time.time()
+                            _GLOBAL_MQTT_MESSAGE_COUNT += 1
+                            _GLOBAL_LAST_PAYLOAD = data
+                            _GLOBAL_LAST_TELEMETRY.update(data)
+                except Exception as e:
                     pass
 
             try:
+                _GLOBAL_MQTT_CONN_STATUS = "CONNECTING..."
                 client = mqtt.Client(
                     mqtt.CallbackAPIVersion.VERSION2 if hasattr(mqtt, "CallbackAPIVersion") else None,
                     client_id=f"HAADS-Python-{int(time.time())}"
                 )
                 client.on_connect = on_connect
+                client.on_disconnect = on_disconnect
                 client.on_message = on_message
                 client.connect_async(broker, port, keepalive=30)
                 client.loop_start()
                 _GLOBAL_MQTT_CLIENT = client
-                print(f"[HardwareInterface] Started persistent MQTT background network loop on {broker}:{port}.")
+                print(f"[HardwareInterface] Started persistent MQTT background loop on {broker}:{port}.")
             except Exception as e:
+                _GLOBAL_MQTT_CONN_STATUS = "ERROR"
+                _GLOBAL_MQTT_CONN_ERROR = str(e)
                 print(f"[HardwareInterface] Persistent MQTT setup note: {e}")
 
     return _GLOBAL_MQTT_CLIENT
@@ -141,9 +166,11 @@ class HardwareInterface:
 
     def process_telemetry_heartbeat(self, data):
         """Processes incoming telemetry payload (updates global heartbeat & state)."""
-        global _GLOBAL_LAST_HEARTBEAT_TIME, _GLOBAL_LAST_TELEMETRY
+        global _GLOBAL_LAST_HEARTBEAT_TIME, _GLOBAL_LAST_TELEMETRY, _GLOBAL_MQTT_MESSAGE_COUNT, _GLOBAL_LAST_PAYLOAD
         _GLOBAL_LAST_HEARTBEAT_TIME = time.time()
+        _GLOBAL_MQTT_MESSAGE_COUNT += 1
         if isinstance(data, dict):
+            _GLOBAL_LAST_PAYLOAD = data
             _GLOBAL_LAST_TELEMETRY.update(data)
             if "pan" in data:
                 self.pan_angle = int(data["pan"])
@@ -152,8 +179,8 @@ class HardwareInterface:
 
     def get_connection_state(self):
         """
-        Determines current state machine state based strictly on last heartbeat time:
-        - WOKWI_ONLINE: Heartbeat received within last 5 seconds.
+        Determines current state machine state based strictly on last valid heartbeat time:
+        - WOKWI_ONLINE: Valid heartbeat received within last 5 seconds.
         - WOKWI_CONNECTING: Heartbeat received within 5-8 seconds.
         - WOKWI_OFFLINE: No heartbeat for >5 seconds (or never received).
         """
@@ -198,6 +225,10 @@ class HardwareInterface:
             "active_control_mode": active_control_mode,
             "source": source,
             "last_heartbeat_age_sec": hb_age,
+            "mqtt_connection_status": _GLOBAL_MQTT_CONN_STATUS,
+            "mqtt_connection_error": _GLOBAL_MQTT_CONN_ERROR,
+            "mqtt_message_count": _GLOBAL_MQTT_MESSAGE_COUNT,
+            "mqtt_last_payload": _GLOBAL_LAST_PAYLOAD,
             "pan_angle": self.pan_angle,
             "tilt_angle": self.tilt_angle,
             "telemetry": _GLOBAL_LAST_TELEMETRY

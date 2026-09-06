@@ -2,7 +2,7 @@
 HAADS SIH 26050 - Streamlit Engineering Dashboard Module
 Renders the 11-section engineering dashboard for High Altitude Anti-Drone System prototype.
 SIH Problem Statement 26050 Alignment: High Altitude Performance Optimization and Robust Design.
-Includes automatic 2-second dashboard refresh and heartbeat-driven Wokwi status.
+Includes automatic 2-second dashboard refresh, WebRTC live camera streaming, and MQTT diagnostics.
 """
 
 import streamlit as st
@@ -12,6 +12,13 @@ import time
 import os
 import math
 import numpy as np
+
+try:
+    from streamlit_webrtc import webrtc_streamer, RTCConfiguration, VideoProcessorBase
+    import av
+    WEBRTC_AVAILABLE = True
+except ImportError:
+    WEBRTC_AVAILABLE = False
 
 import config
 from environment import EnvironmentSimulator
@@ -132,7 +139,7 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
     # ----------------------------------------------------
     target_mode = st.radio(
         "Select Target Input Source:",
-        ["Synthetic Drone Target", "Scan Target with Camera"],
+        ["Synthetic Drone Target", "Start Live Camera"],
         index=0,
         horizontal=True
     )
@@ -141,6 +148,8 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
     cam_source = "SYNTHETIC TARGET"
     cam_status_str = "STANDBY"
     is_live_camera = False
+
+    demo_proxy_mode = st.checkbox("📱 Enable Demo Proxy Target Mode (Use Cell Phone / Object as Drone-Proxy Test)", value=False)
 
     if target_mode == "Synthetic Drone Target":
         st.markdown("<span class='sim-badge'>SYNTHETIC TARGET — SIMULATION ONLY</span>", unsafe_allow_html=True)
@@ -154,31 +163,44 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
         cam_source = "SYNTHETIC TARGET"
         cam_status_str = "SYNTHETIC DRONE TARGET — SIMULATION ONLY"
 
-    elif target_mode == "Scan Target with Camera":
-        st.markdown("<span class='real-badge'>LIVE CAMERA FEED — REAL-TIME OBJECT SCANNING</span>", unsafe_allow_html=True)
+    elif target_mode == "Start Live Camera":
+        st.markdown("<span class='real-badge'>LIVE CAMERA STREAM — REAL-TIME SCANNING</span>", unsafe_allow_html=True)
         is_live_camera = True
         
-        # Read live hardware camera frame from CameraManager
+        # Try local camera manager frame first
         cam_success, live_frame = camera_mgr.get_frame()
         if cam_success and live_frame is not None and camera_mgr.status == "ONLINE":
             frame = live_frame
-            cam_source = "LIVE CAMERA"
-            cam_status_str = f"ONLINE (LIVE WEBCAM FEED - {camera_mgr.fps:.1f} FPS)"
+            cam_source = "LIVE LAPTOP WEBCAM"
+            cam_status_str = f"ONLINE (LIVE WEBCAM - {camera_mgr.fps:.1f} FPS)"
         else:
-            cam_img_buffer = st.camera_input("📷 Live Camera Streamer / Frame Grabber", key="camera_scan_input")
+            # Render WebRTC live camera streamer for Streamlit Cloud
+            if WEBRTC_AVAILABLE:
+                st.caption("🎥 WebRTC Browser Live Camera Streamer (Streamlit Cloud Active)")
+                webrtc_ctx = webrtc_streamer(
+                    key="haads-live-webcam-cloud",
+                    rtc_configuration=RTCConfiguration({"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}),
+                    media_stream_constraints={"video": True, "audio": False}
+                )
+                if webrtc_ctx.video_processor:
+                    cam_source = "LIVE WEBRTC CAMERA"
+                    cam_status_str = "ONLINE (LIVE WEBRTC STREAM)"
+
+            cam_img_buffer = st.camera_input("📷 Capture Frame / Web Snapshot", key="camera_scan_input")
             if cam_img_buffer is not None:
                 bytes_data = cam_img_buffer.getvalue()
                 file_bytes = np.frombuffer(bytes_data, np.uint8)
                 decoded_frame = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
                 if decoded_frame is not None:
                     frame = cv2.resize(decoded_frame, (640, 480))
-                    cam_source = "LIVE CAMERA SNAPSHOT"
-                    cam_status_str = "ONLINE (BROWSER CAMERA)"
+                    cam_source = "LIVE BROWSER CAMERA"
+                    cam_status_str = "ONLINE (BROWSER CAMERA SNAPSHOT)"
             else:
-                st.info("SYSTEM READY — Click 'Take Photo' above to scan live target.")
-                frame = create_synthetic_drone_frame(320, 240)
-                cam_source = "CAMERA STANDBY"
-                cam_status_str = "SYSTEM READY — AWAITING CAPTURE"
+                if frame is None:
+                    st.info("SYSTEM READY — Allow camera access or take photo above.")
+                    frame = create_synthetic_drone_frame(320, 240)
+                    cam_source = "CAMERA STANDBY"
+                    cam_status_str = "SYSTEM READY — AWAITING CAPTURE"
 
     if frame is None:
         frame = create_synthetic_drone_frame(420, 180)
@@ -186,7 +208,9 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
     # ----------------------------------------------------
     # SYSTEM PIPELINE EXECUTION
     # ----------------------------------------------------
-    if is_live_camera and cam_source in ["LIVE CAMERA", "LIVE CAMERA SNAPSHOT"]:
+    proxy_info_str = None
+
+    if is_live_camera and cam_source in ["LIVE LAPTOP WEBCAM", "LIVE BROWSER CAMERA", "LIVE WEBRTC CAMERA"]:
         # Run real YOLO26n detection on live camera frame
         raw_detections = detector.detect(frame) if detector.model_loaded else []
         
@@ -210,6 +234,10 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
                 confidence = primary_target.confidence
                 target_cls = primary_target.class_name
                 bbox = primary_target.bbox
+
+                # Check Demo Proxy Mode
+                if demo_proxy_mode:
+                    proxy_info_str = f"DEMO PROXY TARGET: ACTIVE | Target Role: DRONE-PROXY TEST OBJECT ({target_cls}) | Status: SIMULATION / DEMONSTRATION ONLY"
             else:
                 target_x, target_y = 320.0, 240.0
                 error_x, error_y = 0.0, 0.0
@@ -338,6 +366,10 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
         st.write(f"• **Confidence Score**: **`{confidence * 100:.1f}%`**")
         st.write(f"• **Track Object ID**: **`{track_id if track_id else 'NO ACTIVE TARGET'}`**")
         st.write(f"• **Inference Latency**: `{detector.last_inference_time_ms:.1f} ms`")
+        
+        if proxy_info_str:
+            st.warning(f"📱 **{proxy_info_str}**")
+
         if "SYNTHETIC" in cam_source:
             st.caption("ℹ️ *Mode: SYNTHETIC TARGET — SIMULATION ONLY*")
         else:
@@ -492,6 +524,19 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
         st.write(f"• Pan/Tilt Servos: **{'ONLINE' if is_wokwi_online else 'NOT CONNECTED'}**")
         st.write(f"• Potentiometers: **{'ONLINE' if is_wokwi_online else 'NOT CONNECTED'}**")
         st.write(f"• Communication: **{'CONNECTED' if is_wokwi_online else 'NOT CONNECTED'}**")
+
+    # Expandable MQTT Diagnostics Debugger (PART B)
+    with st.expander("🔍 MQTT Diagnostics & Telemetry Debugger", expanded=False):
+        st.write(f"• **MQTT Broker**: `broker.hivemq.com:1883`")
+        st.write(f"• **Telemetry Topic**: `isr/sih/26050/telemetry`")
+        st.write(f"• **MQTT Connection Status**: `{hw_state.get('mqtt_connection_status', 'DISCONNECTED')}`")
+        if hw_state.get('mqtt_connection_error'):
+            st.error(f"MQTT Error: {hw_state.get('mqtt_connection_error')}")
+        st.write(f"• **Heartbeat State Machine**: `{hw_state.get('state', 'WOKWI_OFFLINE')}`")
+        st.write(f"• **Total Telemetry Messages Received**: `{hw_state.get('mqtt_message_count', 0)}`")
+        st.write(f"• **Last Heartbeat Age**: `{hw_state.get('last_heartbeat_age_sec')} seconds`")
+        st.markdown("**Last Telemetry Payload Received:**")
+        st.json(hw_state.get('mqtt_last_payload') if hw_state.get('mqtt_last_payload') else {"status": "No payload received yet"})
 
     st.markdown("---")
 
