@@ -2,7 +2,7 @@
 HAADS SIH 26050 - Streamlit Engineering Dashboard Module
 Renders the 11-section engineering dashboard for High Altitude Anti-Drone System prototype.
 SIH Problem Statement 26050 Alignment: High Altitude Performance Optimization and Robust Design.
-Includes WebRTC live browser camera processing, real mobile phone detection alerts, and Wokwi MQTT telemetry.
+Includes automatic browser webcam permission acquisition, real mobile phone detection alerts, and Wokwi MQTT telemetry.
 """
 
 import streamlit as st
@@ -189,7 +189,7 @@ class YOLOVideoProcessor(VideoProcessorBase):
             frame_age = (now - self.last_frame_time) if self.last_frame_time > 0 else 999.0
             is_online = (self.last_frame_time > 0 and frame_age < 3.0)
             
-            cam_state = "ONLINE" if is_online else ("WAITING" if self.last_frame_time == 0 else "OFFLINE")
+            cam_state = "ONLINE" if is_online else ("WAITING FOR PERMISSION" if self.last_frame_time == 0 else "OFFLINE")
             
             return {
                 "camera_state": cam_state,
@@ -244,7 +244,7 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
         initial_sidebar_state="expanded"
     )
 
-    # Custom CSS for dark engineering styling
+    # Custom CSS for dark engineering styling & hiding old button widgets
     st.markdown("""
         <style>
         .main { background-color: #0e1117; }
@@ -331,7 +331,7 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
     demo_proxy_mode = st.checkbox("📱 Enable Demo Proxy Target Mode (Use Cell Phone / Object as Drone-Proxy Test)", value=True)
 
     # Initialize Real System Pipeline State Variables
-    camera_state = "WAITING"
+    camera_state = "WAITING FOR PERMISSION"
     yolo_state = "WAITING"
     tracking_state = "WAITING"
     target_cls = "NO TARGET DETECTED"
@@ -345,8 +345,8 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
     cell_phone_detected = False
     cell_phone_conf = None
     cell_phone_tid = None
-    webrtc_link_status = "DISCONNECTED"
-    browser_cam_status = "UNKNOWN"
+    webrtc_link_status = "CONNECTING / AUTOMATIC START"
+    browser_cam_status = "WAITING FOR PERMISSION"
     frame_count = 0
     fps = 0.0
     last_frame_age = 999.0
@@ -363,16 +363,19 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
         cam_source = "LIVE LAPTOP CAMERA"
         
         with col_det1:
-            st.markdown("<span class='real-badge'>LIVE WEBCAM STREAM — SCANNING ACTIVE</span>", unsafe_allow_html=True)
-            st.caption("📷 Browser WebRTC Live Video Streamer (Allow camera permission in browser)")
-
+            st.markdown("#### 📷 LIVE LAPTOP CAMERA")
+            
             if WEBRTC_AVAILABLE:
                 try:
+                    # Autostart camera without START button using desired_playing_state=True & media_toggle_controls=False
                     webrtc_ctx = webrtc_streamer(
                         key="haads-live-camera",
                         video_processor_factory=YOLOVideoProcessor,
+                        desired_playing_state=True,
+                        media_toggle_controls=False,
                         rtc_configuration=RTCConfiguration({"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}),
-                        media_stream_constraints={"video": True, "audio": False}
+                        media_stream_constraints={"video": {"width": {"ideal": 640}, "height": {"ideal": 480}}, "audio": False},
+                        video_html_attrs={"autoPlay": True, "controls": False, "style": {"width": "100%", "borderRadius": "8px"}, "muted": True, "playsInline": True}
                     )
                 except Exception as e:
                     webrtc_error_str = str(e)
@@ -400,15 +403,51 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
                     fps = proc_state["fps"]
                     last_frame_age = proc_state["last_frame_age"]
                 else:
-                    webrtc_link_status = "CONNECTING / AWAITING START"
-                    browser_cam_status = "AWAITING USER PERMISSION"
-                    camera_state = "WAITING"
+                    webrtc_link_status = "CONNECTING / AUTOMATIC START"
+                    browser_cam_status = "WAITING FOR PERMISSION"
+                    camera_state = "WAITING FOR PERMISSION"
                     yolo_state = "WAITING"
                     tracking_state = "WAITING"
                     target_cls = "NO TARGET DETECTED"
                     confidence = None
                     track_id = None
-                    st.info("ℹ️ Click **START** in the WebRTC camera widget above and allow browser camera permission.")
+                    
+                    # Render Automatic Browser HTML5 Camera Permission Component
+                    st.components.v1.html("""
+                        <div style="background-color: #1e222d; padding: 12px; border-radius: 8px; border: 1px solid #2d313e; text-align: center;">
+                            <video id="haads-auto-webcam" autoplay muted playsinline style="width: 100%; max-height: 320px; border-radius: 6px; background: #0e1117;"></video>
+                            <p id="cam-status-msg" style="color: #f9e79f; font-size: 0.9em; margin-top: 6px;">
+                                🟡 Requesting Browser Camera Permission... Please click <b>ALLOW</b> in your browser dialog.
+                            </p>
+                        </div>
+                        <script>
+                        async function startAutoCamera() {
+                            const msgEl = document.getElementById('cam-status-msg');
+                            const videoEl = document.getElementById('haads-auto-webcam');
+                            try {
+                                const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+                                if (videoEl) {
+                                    videoEl.srcObject = stream;
+                                }
+                                if (msgEl) {
+                                    msgEl.innerHTML = "<span style='color:#a3e4d7;'>🟢 Laptop Webcam Active — Stream Connected</span>";
+                                }
+                            } catch (err) {
+                                console.error("Camera Permission Error:", err);
+                                if (msgEl) {
+                                    if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+                                        msgEl.innerHTML = "<span style='color:#fadbd8;'>⛔ Camera Permission Denied by Browser. Please allow camera access in browser address bar.</span>";
+                                    } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+                                        msgEl.innerHTML = "<span style='color:#fadbd8;'>❌ No Webcam Device Detected.</span>";
+                                    } else {
+                                        msgEl.innerHTML = "<span style='color:#fadbd8;'>⚠️ Camera Error: " + err.message + "</span>";
+                                    }
+                                }
+                            }
+                        }
+                        startAutoCamera();
+                        </script>
+                    """, height=360)
 
             else:
                 st.error("streamlit-webrtc package is unavailable.")
@@ -449,8 +488,12 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
         # Real Camera Status Badge
         if camera_state == "ONLINE":
             st.markdown("• **Camera Status**: <span class='real-badge'>🟢 ONLINE (LIVE WEBCAM)</span>", unsafe_allow_html=True)
-        elif camera_state == "WAITING":
-            st.markdown("• **Camera Status**: <span class='waiting-badge'>🟡 WAITING (AWAITING FRAMES)</span>", unsafe_allow_html=True)
+        elif "WAITING" in camera_state:
+            st.markdown("• **Camera Status**: <span class='waiting-badge'>🟡 WAITING FOR PERMISSION</span>", unsafe_allow_html=True)
+        elif "PERMISSION" in camera_state:
+            st.markdown("• **Camera Status**: <span class='offline-badge'>⛔ PERMISSION DENIED</span>", unsafe_allow_html=True)
+        elif "DEVICE" in camera_state:
+            st.markdown("• **Camera Status**: <span class='offline-badge'>❌ NO DEVICE DETECTED</span>", unsafe_allow_html=True)
         else:
             st.markdown("• **Camera Status**: <span class='offline-badge'>🔴 OFFLINE / DISCONNECTED</span>", unsafe_allow_html=True)
 
@@ -749,7 +792,7 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
     subs = list(health_results["subsystems"].items())
     for idx, (sub, stat) in enumerate(subs):
         with health_cols[idx % 3]:
-            icon = "✅" if stat in ["ONLINE", "ACTIVE", "CONNECTED"] else ("🟡" if stat in ["WAITING", "ACQUIRING", "READY"] else "❌")
+            icon = "✅" if stat in ["ONLINE", "ACTIVE", "CONNECTED"] else ("🟡" if stat in ["WAITING", "WAITING FOR PERMISSION", "ACQUIRING", "READY"] else "❌")
             st.write(f"{icon} **{sub.upper()}**: `{stat}`")
 
     st.markdown("---")

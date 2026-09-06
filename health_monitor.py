@@ -31,13 +31,19 @@ class HealthMonitor:
         self.alerts = []
 
         # 1. Camera Subsystem Status
-        cam_str = str(camera_status).upper()
+        if isinstance(camera_status, bool):
+            cam_str = "ONLINE" if camera_status else "OFFLINE"
+        else:
+            cam_str = str(camera_status or "OFFLINE").upper()
+
         if "ONLINE" in cam_str:
             self.subsystems["camera"] = "ONLINE"
-        elif "WAITING" in cam_str:
-            self.subsystems["camera"] = "WAITING"
         elif "PERMISSION" in cam_str:
             self.subsystems["camera"] = "PERMISSION DENIED"
+        elif "WAITING" in cam_str:
+            self.subsystems["camera"] = "WAITING"
+        elif "NO DEVICE" in cam_str or "DEVICE" in cam_str:
+            self.subsystems["camera"] = "NO DEVICE"
         elif "ERROR" in cam_str:
             self.subsystems["camera"] = "ERROR"
             self.alerts.append({
@@ -49,8 +55,12 @@ class HealthMonitor:
             self.subsystems["camera"] = "OFFLINE"
 
         # 2. AI Detector Status
-        det_str = str(detector_status).upper()
-        if "ACTIVE" in det_str:
+        if isinstance(detector_status, bool):
+            det_str = "ACTIVE" if detector_status else "ERROR"
+        else:
+            det_str = str(detector_status or "WAITING").upper()
+
+        if "ACTIVE" in det_str or "TRUE" in det_str:
             self.subsystems["ai_detector"] = "ACTIVE"
         elif "READY" in det_str:
             self.subsystems["ai_detector"] = "READY"
@@ -65,12 +75,14 @@ class HealthMonitor:
             self.subsystems["ai_detector"] = "WAITING"
 
         # 3. Tracking Status
-        if isinstance(tracking_status, str):
-            track_str = tracking_status.upper()
-        else:
+        if isinstance(tracking_status, bool):
+            track_str = "ACTIVE" if tracking_status else "WAITING"
+        elif isinstance(tracking_status, (int, float)):
             track_str = "ACTIVE" if tracking_status > 0 else "WAITING"
+        else:
+            track_str = str(tracking_status or "WAITING").upper()
 
-        if "ACTIVE" in track_str:
+        if "ACTIVE" in track_str or "TRUE" in track_str:
             self.subsystems["tracking"] = "ACTIVE"
         elif "ACQUIRING" in track_str:
             self.subsystems["tracking"] = "ACQUIRING"
