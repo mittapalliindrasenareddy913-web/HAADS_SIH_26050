@@ -2,6 +2,7 @@ ultralytics
 opencv-python-headless
 streamlit
 streamlit-webrtc
+av
 numpy
 pandas
 requests
