@@ -436,7 +436,7 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
             st.markdown("#### 📷 LIVE LAPTOP CAMERA")
             
             if WEBRTC_AVAILABLE:
-                # Browser Camera Selector JS: Enumerates devices, excludes phone keywords, selects built-in laptop camera exact deviceId
+                # Browser Camera Selector JS: Enumerates devices, excludes phone/virtual keywords (MITTAPALLI, DroidCam, OBS), selects built-in laptop camera exact deviceId
                 st.components.v1.html(
                     """
                     <script>
@@ -457,7 +457,7 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
                                 }
                             }
 
-                            const phoneKeywords = ["phone link", "mittapalli", "android", "iphone", "mobile", "phone", "remote camera", "continuity", "virtual"];
+                            const phoneKeywords = ["mittapalli", "phone link", "android", "iphone", "mobile", "phone", "remote camera", "continuity", "virtual camera", "virtual", "droidcam", "iriun", "obs virtual camera", "obs"];
                             const laptopKeywords = ["integrated camera", "built-in camera", "integrated webcam", "hd webcam", "hd camera", "laptop camera", "webcam", "internal camera", "integrated", "built-in"];
                             const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
 
@@ -469,7 +469,10 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
                                     const lbl = (d.label || '').toLowerCase();
                                     return !phoneKeywords.some(kw => lbl.includes(kw));
                                 });
-                                if (candidates.length === 0) candidates = videoInputs;
+                                if (candidates.length === 0) {
+                                    console.error("[CameraSelector] Blocked virtual/remote camera device. No physical laptop camera detected.");
+                                    return;
+                                }
                                 selected = candidates.find(d => {
                                     const lbl = (d.label || '').toLowerCase();
                                     return laptopKeywords.some(kw => lbl.includes(kw));
@@ -502,6 +505,14 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
 
                                 const matchDev = videoInputs.find(d => d.deviceId === actualDeviceId);
                                 actualTrackLabel = (matchDev && matchDev.label) ? matchDev.label : (track.label || requestedLabel);
+
+                                // Hard Safety Check: If track resolved to virtual camera (MITTAPALLI, DroidCam, OBS), stop immediately!
+                                const isVirtual = phoneKeywords.some(kw => actualTrackLabel.toLowerCase().includes(kw));
+                                if (isVirtual && !isMobile) {
+                                    console.error("[CameraSelector] Hard safety trigger: Blocked virtual camera device (" + actualTrackLabel + ").");
+                                    track.stop();
+                                    return;
+                                }
 
                                 testStream.getTracks().forEach(t => t.stop());
                             } catch(err) {

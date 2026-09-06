@@ -9,14 +9,22 @@ import time
 import numpy as np
 
 
-PHONE_KEYWORDS = ["phone link", "mittapalli", "android", "iphone", "mobile", "phone", "remote camera", "continuity", "virtual"]
-LAPTOP_KEYWORDS = ["integrated camera", "built-in camera", "integrated webcam", "hd webcam", "hd camera", "laptop camera", "webcam", "internal camera", "integrated", "built-in"]
+EXCLUDED_KEYWORDS = [
+    "mittapalli", "phone link", "android", "iphone", "mobile", "phone",
+    "remote camera", "continuity", "virtual camera", "virtual",
+    "droidcam", "iriun", "obs virtual camera", "obs"
+]
+PHONE_KEYWORDS = EXCLUDED_KEYWORDS
+LAPTOP_KEYWORDS = [
+    "integrated camera", "integrated webcam", "built-in camera", "built-in webcam",
+    "hd webcam", "hd camera", "laptop camera", "internal camera", "integrated", "built-in", "webcam"
+]
 
 def filter_camera_devices(device_list, is_mobile=False):
     """
     Filters camera devices list.
     - If is_mobile is True: returns default mobile camera without excluding mobile keywords.
-    - If is_mobile is False (laptop/desktop): excludes remote/phone link cameras and prioritizes built-in laptop webcams.
+    - If is_mobile is False (laptop/desktop): strictly excludes virtual/remote/phone cameras (MITTAPALLI, DroidCam, OBS, etc.) and prioritizes physical built-in laptop webcams.
     """
     if not device_list:
         return None, "No Video Input Devices Available"
@@ -26,24 +34,25 @@ def filter_camera_devices(device_list, is_mobile=False):
         label = first.get("label", "Mobile Camera") if isinstance(first, dict) else str(first)
         return first, label
 
-    # Laptop / Desktop Browser: Exclude phone link & remote cameras
+    # Laptop / Desktop Browser: Exclude all virtual / phone link cameras
     candidates = []
     for dev in device_list:
         lbl = (dev.get("label", "") if isinstance(dev, dict) else str(dev)).lower()
-        if not any(kw in lbl for kw in PHONE_KEYWORDS):
+        if not any(kw in lbl for kw in EXCLUDED_KEYWORDS):
             candidates.append(dev)
 
-    valid_list = candidates if candidates else device_list
+    if not candidates:
+        return None, "Blocked virtual/remote camera device. No physical laptop camera detected."
 
-    # Prefer built-in laptop camera keywords
-    for dev in valid_list:
+    # Prefer physical built-in laptop camera keywords
+    for dev in candidates:
         lbl = (dev.get("label", "") if isinstance(dev, dict) else str(dev)).lower()
         if any(kw in lbl for kw in LAPTOP_KEYWORDS):
             selected_lbl = dev.get("label", "Integrated Laptop Camera") if isinstance(dev, dict) else str(dev)
             return dev, selected_lbl
 
-    fallback = valid_list[0]
-    fallback_lbl = fallback.get("label", "Laptop Webcam") if isinstance(fallback, dict) else str(fallback)
+    fallback = candidates[0]
+    fallback_lbl = fallback.get("label", "Integrated Laptop Camera") if isinstance(fallback, dict) else str(fallback)
     return fallback, fallback_lbl
 
 
