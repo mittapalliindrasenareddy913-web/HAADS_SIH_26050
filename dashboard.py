@@ -56,8 +56,10 @@ class YOLOVideoProcessor(VideoProcessorBase):
         self.detector = get_shared_detector()
         self.tracker = PersistentTracker()
 
+        self.recv_count = 0
         self.callback_count = 0
         self.frame_count = 0
+        self.start_time = time.time()
         self.last_frame_time = 0.0
         self.fps = 0.0
         self.device_label = "Integrated Laptop Camera"
@@ -101,6 +103,7 @@ class YOLOVideoProcessor(VideoProcessorBase):
             h, w, c = img.shape
 
             with self.lock:
+                self.recv_count += 1
                 self.callback_count += 1
                 self.frame_count += 1
                 self.frame_width = w
@@ -211,10 +214,18 @@ class YOLOVideoProcessor(VideoProcessorBase):
     def get_state(self):
         with self.lock:
             now = time.time()
+            uptime = now - self.start_time
             frame_age = (now - self.last_frame_time) if self.last_frame_time > 0 else 999.0
             is_online = (self.last_frame_time > 0 and frame_age < 3.0)
             
-            cam_state = "ONLINE" if is_online else ("INITIALIZING" if self.last_frame_time == 0 else "OFFLINE")
+            if is_online:
+                cam_state = "ONLINE"
+            elif self.last_frame_time == 0 and uptime > 10.0:
+                cam_state = "MEDIA FRAME NOT RECEIVED"
+            elif self.last_frame_time == 0:
+                cam_state = "INITIALIZING (AWAITING WEBCAM FRAMES)"
+            else:
+                cam_state = "OFFLINE"
             
             return {
                 "camera_state": cam_state,
@@ -225,8 +236,7 @@ class YOLOVideoProcessor(VideoProcessorBase):
                 "actual_device_id": self.actual_device_id,
                 "actual_resolution": f"{self.frame_width}x{self.frame_height} px" if self.frame_width > 0 else self.actual_resolution,
                 "actual_fps": round(self.fps, 1),
-                "yolo_state": self.yolo_state if is_online else "WAITING",
-                "tracking_state": self.tracking_state if is_online else "WAITING",
+                "recv_count": self.recv_count,
                 "callback_count": self.callback_count,
                 "frame_count": self.frame_count,
                 "fps": round(self.fps, 1),
@@ -235,6 +245,8 @@ class YOLOVideoProcessor(VideoProcessorBase):
                 "frame_width": self.frame_width,
                 "frame_height": self.frame_height,
                 "last_callback_error": self.last_callback_error,
+                "yolo_state": self.yolo_state if is_online else "WAITING",
+                "tracking_state": self.tracking_state if is_online else "WAITING",
                 "detected_class": self.detected_class if is_online else "NO TARGET DETECTED",
                 "confidence": self.confidence if is_online else None,
                 "track_id": self.track_id if is_online else None,
@@ -396,38 +408,15 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
     webrtc_error_str = "None"
     webrtc_ctx = None
 
-    # Read query parameters for camera device selection (set by browser JS component)
-    query_params = st.query_params
-    sel_cam_id = query_params.get("cam_id", None)
-    sel_cam_req = query_params.get("cam_req", "Integrated Laptop Camera")
-    sel_cam_act = query_params.get("cam_act", "Integrated Laptop Camera")
-    sel_cam_act_id = query_params.get("cam_act_id", "Default")
-    sel_cam_res = query_params.get("cam_res", "640x480 px")
-    sel_cam_fps = query_params.get("cam_fps", "30.0")
-
-    if sel_cam_id:
-        media_constraints = {
-            "video": {
-                "deviceId": {"exact": sel_cam_id},
-                "width": {"ideal": 640},
-                "height": {"ideal": 480}
-            },
-            "audio": False
-        }
-    else:
-        media_constraints = {
-            "video": {
-                "width": {"ideal": 640},
-                "height": {"ideal": 480}
-            },
-            "audio": False
-        }
-
     # ----------------------------------------------------
     # 2. TARGET DETECTION & IDENTIFICATION
     # ----------------------------------------------------
     st.subheader("2. Target Detection & Identification")
     col_det1, col_det2 = st.columns([6, 4])
+
+    webrtc_is_playing = False
+    webrtc_is_signalling = False
+    recv_count = 0
 
     if target_mode == "Start Live Camera":
         cam_source = "LIVE LAPTOP CAMERA"
@@ -436,140 +425,31 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
             st.markdown("#### 📷 LIVE LAPTOP CAMERA")
             
             if WEBRTC_AVAILABLE:
-                # Browser Camera Selector JS: Enumerates devices, excludes phone/virtual keywords (MITTAPALLI, DroidCam, OBS), selects built-in laptop camera exact deviceId
-                st.components.v1.html(
-                    """
-                    <script>
-                    (async function() {
-                        try {
-                            let devices = await navigator.mediaDevices.enumerateDevices();
-                            let videoInputs = devices.filter(d => d.kind === 'videoinput');
-
-                            const needsPermission = videoInputs.length > 0 && videoInputs.every(d => !d.label);
-                            if (needsPermission) {
-                                try {
-                                    const tempStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-                                    tempStream.getTracks().forEach(t => t.stop());
-                                    devices = await navigator.mediaDevices.enumerateDevices();
-                                    videoInputs = devices.filter(d => d.kind === 'videoinput');
-                                } catch(e) {
-                                    console.error("[CameraSelector] Initial permission prompt error:", e);
-                                }
-                            }
-
-                            const phoneKeywords = ["mittapalli", "phone link", "android", "iphone", "mobile", "phone", "remote camera", "continuity", "virtual camera", "virtual", "droidcam", "iriun", "obs virtual camera", "obs"];
-                            const laptopKeywords = ["integrated camera", "built-in camera", "integrated webcam", "hd webcam", "hd camera", "laptop camera", "webcam", "internal camera", "integrated", "built-in"];
-                            const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-
-                            let selected = null;
-                            if (isMobile) {
-                                selected = videoInputs[0];
-                            } else {
-                                let candidates = videoInputs.filter(d => {
-                                    const lbl = (d.label || '').toLowerCase();
-                                    return !phoneKeywords.some(kw => lbl.includes(kw));
-                                });
-                                if (candidates.length === 0) {
-                                    console.error("[CameraSelector] Blocked virtual/remote camera device. No physical laptop camera detected.");
-                                    return;
-                                }
-                                selected = candidates.find(d => {
-                                    const lbl = (d.label || '').toLowerCase();
-                                    return laptopKeywords.some(kw => lbl.includes(kw));
-                                }) || candidates[0];
-                            }
-
-                            if (!selected) return;
-
-                            const selectedDeviceId = selected.deviceId;
-                            const requestedLabel = selected.label || "Integrated Laptop Camera";
-
-                            let actualDeviceId = selectedDeviceId;
-                            let actualTrackLabel = requestedLabel;
-                            let actualWidth = 640;
-                            let actualHeight = 480;
-                            let actualFPS = 30.0;
-
-                            try {
-                                const testStream = await navigator.mediaDevices.getUserMedia({
-                                    video: { deviceId: { exact: selectedDeviceId } },
-                                    audio: false
-                                });
-                                const track = testStream.getVideoTracks()[0];
-                                const settings = track.getSettings();
-
-                                actualDeviceId = settings.deviceId || selectedDeviceId;
-                                actualWidth = settings.width || 640;
-                                actualHeight = settings.height || 480;
-                                actualFPS = settings.frameRate || 30.0;
-
-                                const matchDev = videoInputs.find(d => d.deviceId === actualDeviceId);
-                                actualTrackLabel = (matchDev && matchDev.label) ? matchDev.label : (track.label || requestedLabel);
-
-                                // Hard Safety Check: If track resolved to virtual camera (MITTAPALLI, DroidCam, OBS), stop immediately!
-                                const isVirtual = phoneKeywords.some(kw => actualTrackLabel.toLowerCase().includes(kw));
-                                if (isVirtual && !isMobile) {
-                                    console.error("[CameraSelector] Hard safety trigger: Blocked virtual camera device (" + actualTrackLabel + ").");
-                                    track.stop();
-                                    return;
-                                }
-
-                                testStream.getTracks().forEach(t => t.stop());
-                            } catch(err) {
-                                console.warn("[CameraSelector] Test stream exact check error:", err);
-                            }
-
-                            const parentUrl = new URL(window.parent.location.href);
-                            const currId = parentUrl.searchParams.get("cam_id");
-                            if (currId !== selectedDeviceId) {
-                                parentUrl.searchParams.set("cam_id", selectedDeviceId);
-                                parentUrl.searchParams.set("cam_req", requestedLabel);
-                                parentUrl.searchParams.set("cam_act", actualTrackLabel);
-                                parentUrl.searchParams.set("cam_act_id", actualDeviceId);
-                                parentUrl.searchParams.set("cam_res", `${actualWidth}x${actualHeight}`);
-                                parentUrl.searchParams.set("cam_fps", actualFPS.toFixed(1));
-                                window.parent.location.search = parentUrl.search;
-                            }
-                        } catch(e) {
-                            console.error("[CameraSelector] Error:", e);
-                        }
-                    })();
-                    </script>
-                    """,
-                    height=0,
-                )
-
                 try:
-                    # WebRTC Streamer — Enforces exact laptop deviceId in media_stream_constraints
+                    # Single Authoritative WebRTC Streamer (Standard SENDRECV Pipeline)
                     webrtc_ctx = webrtc_streamer(
                         key="haads-live-camera",
+                        mode=WebRtcMode.SENDRECV,
                         video_processor_factory=YOLOVideoProcessor,
                         desired_playing_state=True,
                         media_toggle_controls=False,
                         rtc_configuration=RTCConfiguration({"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}),
-                        media_stream_constraints=media_constraints,
+                        media_stream_constraints={"video": True, "audio": False},
+                        async_processing=True,
                         video_html_attrs={"autoPlay": True, "controls": False, "style": {"width": "100%", "borderRadius": "8px"}, "muted": True, "playsInline": True}
                     )
                 except Exception as e:
                     webrtc_error_str = str(e)
-                    st.error(f"CAMERA ERROR: Unable to open selected {sel_cam_req} ({webrtc_error_str})")
+                    st.error(f"CAMERA ERROR: WebRTC Streamer Failed ({webrtc_error_str})")
+
+                if webrtc_ctx:
+                    webrtc_is_playing = bool(webrtc_ctx.state.playing)
+                    webrtc_is_signalling = bool(webrtc_ctx.state.signalling)
 
                 if webrtc_ctx and webrtc_ctx.video_processor:
-                    webrtc_ctx.video_processor.requested_device_label = sel_cam_req
-                    webrtc_ctx.video_processor.requested_device_id = sel_cam_id if sel_cam_id else "Default"
-                    webrtc_ctx.video_processor.actual_track_label = sel_cam_act
-                    webrtc_ctx.video_processor.actual_device_id = sel_cam_act_id
-                    webrtc_ctx.video_processor.actual_resolution = sel_cam_res
-
-                    webrtc_link_status = "CONNECTED"
-                    browser_cam_status = "AVAILABLE / PERMISSION GRANTED"
-                    get_user_media_status = "SUCCESS"
-                    
                     proc_state = webrtc_ctx.video_processor.get_state()
                     camera_state = proc_state["camera_state"]
-                    camera_device_label = proc_state.get("actual_track_label", sel_cam_act)
-                    yolo_state = proc_state["yolo_state"]
-                    tracking_state = proc_state["tracking_state"]
+                    recv_count = proc_state.get("recv_count", 0)
                     callback_count = proc_state["callback_count"]
                     frame_count = proc_state["frame_count"]
                     fps = proc_state["fps"]
@@ -578,6 +458,8 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
                     frame_height = proc_state["frame_height"]
                     last_callback_error = proc_state["last_callback_error"]
                     
+                    yolo_state = proc_state["yolo_state"]
+                    tracking_state = proc_state["tracking_state"]
                     target_cls = proc_state["detected_class"]
                     confidence = proc_state["confidence"]
                     track_id = proc_state["track_id"]
@@ -589,20 +471,37 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
                     cell_phone_conf = proc_state["cell_phone_confidence"]
                     cell_phone_tid = proc_state["cell_phone_track_id"]
 
-                    if frame_count == 0:
-                        st.info("🟡 WebRTC Link Connected — Initializing laptop webcam feed... (Allow browser camera permission if prompted)")
+                    if recv_count > 0:
+                        webrtc_link_status = "CONNECTED & RECEIVING FRAMES"
+                        browser_cam_status = "AVAILABLE / PERMISSION GRANTED"
+                        get_user_media_status = "SUCCESS"
+                    elif webrtc_is_playing:
+                        webrtc_link_status = "PLAYING (AWAITING FIRST RECV FRAME)"
+                        browser_cam_status = "AVAILABLE / PERMISSION GRANTED"
+                        get_user_media_status = "SUCCESS"
+                        st.info("🟡 WebRTC stream playing — Awaiting first video frame in Python recv()...")
+                    elif webrtc_is_signalling:
+                        webrtc_link_status = "SIGNALLING ESTABLISHED (MEDIA STREAM NOT PLAYING YET)"
+                        browser_cam_status = "WAITING FOR PERMISSION / USER ACTION"
+                        get_user_media_status = "INITIALIZING"
+                        st.warning("⚠️ WebRTC signalling established, but media stream is not playing yet. Allow camera permission if prompted by browser.")
+                    else:
+                        webrtc_link_status = "CONNECTING / AUTOMATIC START"
+                        browser_cam_status = "INITIALIZING"
+                        get_user_media_status = "INITIALIZING"
+                        st.info("ℹ️ Initializing camera connection...")
 
                 else:
-                    webrtc_link_status = "CONNECTING / AUTOMATIC START"
+                    webrtc_link_status = "INITIALIZING WEBRTC CONTEXT"
                     browser_cam_status = "WAITING FOR PERMISSION"
                     get_user_media_status = "INITIALIZING"
-                    camera_state = "INITIALIZING"
+                    camera_state = "INITIALIZING (AWAITING WEBCAM FRAMES)"
                     yolo_state = "WAITING"
                     tracking_state = "WAITING"
                     target_cls = "NO TARGET DETECTED"
                     confidence = None
                     track_id = None
-                    st.info("ℹ️ Initializing camera... Allow browser camera permission if prompted by browser.")
+                    st.info("ℹ️ Initializing camera streamer... Allow browser camera permission if prompted.")
 
             else:
                 st.error("streamlit-webrtc package is unavailable.")
@@ -699,19 +598,15 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
     with st.expander("🔍 Camera / WebRTC Diagnostics & Status Debugger", expanded=False):
         c_diag1, c_diag2 = st.columns(2)
         with c_diag1:
-            st.write(f"• **Browser Permission**: `{browser_cam_status}`")
-            st.write(f"• **Requested Device**: `{sel_cam_req}`")
-            st.write(f"• **Requested Device ID**: `{sel_cam_id if sel_cam_id else 'Default'}`")
-            st.write(f"• **Actual Active Track**: `{sel_cam_act}`")
-            st.write(f"• **Actual Active Device ID**: `{sel_cam_act_id}`")
-            st.write(f"• **Actual Resolution**: `{f'{frame_width}x{frame_height} px' if frame_width > 0 else sel_cam_res}`")
-            st.write(f"• **Actual FPS**: `{fps:.1f} FPS`")
-            st.write(f"• **getUserMedia Status**: `{get_user_media_status}`")
-            st.write(f"• **getUserMedia Error**: `{get_user_media_error}`")
-            st.write(f"• **WebRTC Link State**: `{webrtc_link_status}`")
-            st.write(f"• **Frame Callback Status**: `{'RECEIVING' if callback_count > 0 else 'AWAITING FIRST FRAME'}`")
+            st.write(f"• **WebRTC Context**: `{'CREATED' if webrtc_ctx else 'NONE'}`")
+            st.write(f"• **WebRTC Playing**: `{webrtc_is_playing}`")
+            st.write(f"• **WebRTC Signalling**: `{webrtc_is_signalling}`")
+            st.write(f"• **Video Processor**: `{'CREATED' if (webrtc_ctx and webrtc_ctx.video_processor) else 'NOT CREATED'}`")
+            st.write(f"• **recv() Calls**: `{proc_state.get('recv_count', 0) if (webrtc_ctx and webrtc_ctx.video_processor) else 0}`")
             st.write(f"• **Total Frames Received**: `{frame_count}`")
             st.write(f"• **Frame Callback Count**: `{callback_count}`")
+            st.write(f"• **Frame Resolution**: `{f'{frame_width}x{frame_height} px' if frame_width > 0 else 'N/A'}`")
+            st.write(f"• **Measured Camera FPS**: `{fps:.1f} FPS`")
             st.write(f"• **Last Frame Age**: `{f'{last_frame_age:.1f} seconds' if last_frame_age < 900 else 'No frames received yet'}`")
             st.write(f"• **Camera State**: `{camera_state}`")
         with c_diag2:
@@ -721,7 +616,7 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
             st.write(f"• **Tracking Status**: `{tracking_state}`")
             st.write(f"• **Track Object ID**: `{track_id if track_id is not None else '—'}`")
             st.write(f"• **Inference Latency**: `{f'{latency_ms:.1f} ms' if latency_ms > 0 else '—'}`")
-            st.write(f"• **Last Callback Error**: `{last_callback_error}`")
+            st.write(f"• **Last recv() Error**: `{last_callback_error}`")
 
     st.markdown("---")
 
