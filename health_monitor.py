@@ -38,6 +38,8 @@ class HealthMonitor:
 
         if "ONLINE" in cam_str:
             self.subsystems["camera"] = "ONLINE"
+        elif "WAITING FOR PERMISSION" in cam_str:
+            self.subsystems["camera"] = "WAITING FOR PERMISSION"
         elif "PERMISSION" in cam_str:
             self.subsystems["camera"] = "PERMISSION DENIED"
         elif "WAITING" in cam_str:

@@ -2,7 +2,7 @@
 HAADS SIH 26050 - Streamlit Engineering Dashboard Module
 Renders the 11-section engineering dashboard for High Altitude Anti-Drone System prototype.
 SIH Problem Statement 26050 Alignment: High Altitude Performance Optimization and Robust Design.
-Includes automatic browser webcam permission acquisition, real mobile phone detection alerts, and Wokwi MQTT telemetry.
+Includes device-local laptop webcam selection, automatic permission acquisition, mobile phone alerts, and Wokwi MQTT.
 """
 
 import streamlit as st
@@ -30,6 +30,7 @@ from hardware_interface import HardwareInterface
 from data_manager import SystemDataManager
 from detector import YOLO26nDetector
 from tracker import PersistentTracker
+from camera import filter_camera_devices, PHONE_KEYWORDS, LAPTOP_KEYWORDS
 
 
 # ----------------------------------------------------
@@ -58,6 +59,7 @@ class YOLOVideoProcessor(VideoProcessorBase):
         self.frame_count = 0
         self.last_frame_time = 0.0
         self.fps = 0.0
+        self.device_label = "Integrated Laptop Camera"
         
         # Real Subsystem States
         self.camera_state = "ONLINE"
@@ -193,6 +195,7 @@ class YOLOVideoProcessor(VideoProcessorBase):
             
             return {
                 "camera_state": cam_state,
+                "device_label": self.device_label,
                 "yolo_state": self.yolo_state if is_online else "WAITING",
                 "tracking_state": self.tracking_state if is_online else "WAITING",
                 "frame_count": self.frame_count,
@@ -244,7 +247,7 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
         initial_sidebar_state="expanded"
     )
 
-    # Custom CSS for dark engineering styling & hiding old button widgets
+    # Custom CSS for dark engineering styling
     st.markdown("""
         <style>
         .main { background-color: #0e1117; }
@@ -332,6 +335,7 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
 
     # Initialize Real System Pipeline State Variables
     camera_state = "WAITING FOR PERMISSION"
+    camera_device_label = "Scanning for Integrated Laptop Camera..."
     yolo_state = "WAITING"
     tracking_state = "WAITING"
     target_cls = "NO TARGET DETECTED"
@@ -387,6 +391,7 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
                     
                     proc_state = webrtc_ctx.video_processor.get_state()
                     camera_state = proc_state["camera_state"]
+                    camera_device_label = proc_state.get("device_label", "Integrated Laptop Camera")
                     yolo_state = proc_state["yolo_state"]
                     tracking_state = proc_state["tracking_state"]
                     target_cls = proc_state["detected_class"]
@@ -412,31 +417,86 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
                     confidence = None
                     track_id = None
                     
-                    # Render Automatic Browser HTML5 Camera Permission Component
+                    # Render Device-Local Laptop Webcam Selection HTML5 Component
                     st.components.v1.html("""
                         <div style="background-color: #1e222d; padding: 12px; border-radius: 8px; border: 1px solid #2d313e; text-align: center;">
-                            <video id="haads-auto-webcam" autoplay muted playsinline style="width: 100%; max-height: 320px; border-radius: 6px; background: #0e1117;"></video>
-                            <p id="cam-status-msg" style="color: #f9e79f; font-size: 0.9em; margin-top: 6px;">
-                                🟡 Requesting Browser Camera Permission... Please click <b>ALLOW</b> in your browser dialog.
+                            <video id="haads-laptop-cam" autoplay muted playsinline style="width: 100%; max-height: 340px; border-radius: 6px; background: #0e1117;"></video>
+                            <p id="cam-status-msg" style="color: #f9e79f; font-size: 0.88em; margin-top: 6px; margin-bottom: 0;">
+                                🟡 Requesting Browser Camera Permission... Please click <b>ALLOW</b> in browser dialog.
                             </p>
                         </div>
                         <script>
-                        async function startAutoCamera() {
+                        (async function() {
                             const msgEl = document.getElementById('cam-status-msg');
-                            const videoEl = document.getElementById('haads-auto-webcam');
+                            const videoEl = document.getElementById('haads-laptop-cam');
+                            const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+                            
+                            async function selectBestDevice() {
+                                let tempStream = null;
+                                try {
+                                    tempStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+                                } catch (e) {
+                                    console.warn("Initial permission request:", e);
+                                }
+                                
+                                const devices = await navigator.mediaDevices.enumerateDevices();
+                                const videoInputs = devices.filter(d => d.kind === 'videoinput');
+                                
+                                if (tempStream) {
+                                    tempStream.getTracks().forEach(t => t.stop());
+                                }
+
+                                if (videoInputs.length === 0) {
+                                    return { deviceId: null, label: "No Camera Device Found" };
+                                }
+
+                                if (isMobile) {
+                                    return { deviceId: videoInputs[0].deviceId, label: videoInputs[0].label || "Mobile Front/Main Camera" };
+                                }
+
+                                // Laptop / Desktop: Exclude remote phone cameras (e.g. Phone Link, MITTAPALLI, Android, iPhone)
+                                const phoneKeywords = ["phone link", "mittapalli", "android", "iphone", "mobile", "phone", "remote camera", "continuity", "virtual"];
+                                const laptopKeywords = ["integrated", "built-in", "hd webcam", "hd camera", "laptop", "webcam", "internal"];
+
+                                const nonPhoneDevices = videoInputs.filter(dev => {
+                                    const lbl = (dev.label || "").toLowerCase();
+                                    return !phoneKeywords.some(kw => lbl.includes(kw));
+                                });
+
+                                const validCandidates = nonPhoneDevices.length > 0 ? nonPhoneDevices : videoInputs;
+
+                                for (const dev of validCandidates) {
+                                    const lbl = (dev.label || "").toLowerCase();
+                                    if (laptopKeywords.some(kw => lbl.includes(kw))) {
+                                        return { deviceId: dev.deviceId, label: dev.label || "Integrated Laptop Camera" };
+                                    }
+                                }
+
+                                return { deviceId: validCandidates[0].deviceId, label: validCandidates[0].label || "Laptop Webcam" };
+                            }
+
                             try {
-                                const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+                                const chosen = await selectBestDevice();
+                                const constraints = chosen.deviceId ? 
+                                    { video: { deviceId: { exact: chosen.deviceId }, width: { ideal: 640 }, height: { ideal: 480 } }, audio: false } :
+                                    { video: { facingMode: isMobile ? "user" : "environment" }, audio: false };
+
+                                const stream = await navigator.mediaDevices.getUserMedia(constraints);
                                 if (videoEl) {
                                     videoEl.srcObject = stream;
                                 }
                                 if (msgEl) {
-                                    msgEl.innerHTML = "<span style='color:#a3e4d7;'>🟢 Laptop Webcam Active — Stream Connected</span>";
+                                    msgEl.innerHTML = "<span style='color:#a3e4d7;'>🟢 Active Camera: <b>" + (chosen.label || "Integrated Laptop Camera") + "</b></span>";
                                 }
                             } catch (err) {
-                                console.error("Camera Permission Error:", err);
+                                console.error("Camera Error:", err);
                                 if (msgEl) {
                                     if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-                                        msgEl.innerHTML = "<span style='color:#fadbd8;'>⛔ Camera Permission Denied by Browser. Please allow camera access in browser address bar.</span>";
+                                        if (window.self !== window.top) {
+                                            msgEl.innerHTML = "<span style='color:#fadbd8;'>⛔ Camera access blocked by embedding page. Open application directly or enable allow='camera' on iframe.</span>";
+                                        } else {
+                                            msgEl.innerHTML = "<span style='color:#fadbd8;'>⛔ Camera Permission Denied by Browser. Please allow camera access in address bar.</span>";
+                                        }
                                     } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
                                         msgEl.innerHTML = "<span style='color:#fadbd8;'>❌ No Webcam Device Detected.</span>";
                                     } else {
@@ -444,10 +504,9 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
                                     }
                                 }
                             }
-                        }
-                        startAutoCamera();
+                        })();
                         </script>
-                    """, height=360)
+                    """, height=380)
 
             else:
                 st.error("streamlit-webrtc package is unavailable.")
@@ -470,6 +529,7 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
             st.image(rgb_synth, channels="RGB", use_container_width=True)
 
         camera_state = "ONLINE (SIMULATED)"
+        camera_device_label = "SYNTHETIC TARGET GENERATOR"
         yolo_state = "ACTIVE"
         tracking_state = "ACTIVE"
         target_cls = "SYNTHETIC DRONE TARGET"
@@ -541,6 +601,7 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
     with st.expander("🔍 Camera / WebRTC Diagnostics & Status Debugger", expanded=False):
         c_diag1, c_diag2 = st.columns(2)
         with c_diag1:
+            st.write(f"• **Active Camera Device**: `{camera_device_label}`")
             st.write(f"• **WebRTC Link**: `{webrtc_link_status}`")
             st.write(f"• **Browser Camera**: `{browser_cam_status}`")
             st.write(f"• **Total Frames Received**: `{frame_count}`")
@@ -582,7 +643,7 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
     # Save state to system_data.json
     full_state_data = {
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-        "camera": {"status": camera_state, "fps": round(fps, 1), "source": cam_source, "frames_received": frame_count},
+        "camera": {"status": camera_state, "device_label": camera_device_label, "fps": round(fps, 1), "source": cam_source, "frames_received": frame_count},
         "detection": {
             "model_name": detector.model_name,
             "target_class": target_cls,

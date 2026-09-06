@@ -9,6 +9,44 @@ import time
 import numpy as np
 
 
+PHONE_KEYWORDS = ["phone link", "mittapalli", "android", "iphone", "mobile", "phone", "remote camera", "continuity", "virtual"]
+LAPTOP_KEYWORDS = ["integrated", "built-in", "hd webcam", "hd camera", "laptop", "webcam", "internal"]
+
+def filter_camera_devices(device_list, is_mobile=False):
+    """
+    Filters camera devices list.
+    - If is_mobile is True: returns default mobile camera without excluding mobile keywords.
+    - If is_mobile is False (laptop/desktop): excludes remote/phone link cameras and prioritizes built-in laptop webcams.
+    """
+    if not device_list:
+        return None, "No Video Input Devices Available"
+
+    if is_mobile:
+        first = device_list[0]
+        label = first.get("label", "Mobile Camera") if isinstance(first, dict) else str(first)
+        return first, label
+
+    # Laptop / Desktop Browser: Exclude phone link & remote cameras
+    candidates = []
+    for dev in device_list:
+        lbl = (dev.get("label", "") if isinstance(dev, dict) else str(dev)).lower()
+        if not any(kw in lbl for kw in PHONE_KEYWORDS):
+            candidates.append(dev)
+
+    valid_list = candidates if candidates else device_list
+
+    # Prefer built-in laptop camera keywords
+    for dev in valid_list:
+        lbl = (dev.get("label", "") if isinstance(dev, dict) else str(dev)).lower()
+        if any(kw in lbl for kw in LAPTOP_KEYWORDS):
+            selected_lbl = dev.get("label", "Integrated Laptop Camera") if isinstance(dev, dict) else str(dev)
+            return dev, selected_lbl
+
+    fallback = valid_list[0]
+    fallback_lbl = fallback.get("label", "Laptop Webcam") if isinstance(fallback, dict) else str(fallback)
+    return fallback, fallback_lbl
+
+
 class CameraManager:
     def __init__(self, camera_index=0):
         self.camera_index = camera_index

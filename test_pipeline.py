@@ -1,7 +1,9 @@
 """
-HAADS SIH 26050 - Full System Integration & Heartbeat State Machine Test
+HAADS SIH 26050 - Full System Integration & Device Filter Verification Test Suite
 Verifies end-to-end functionality across all subsystems:
-Camera -> YOLO26n -> Tracking -> Environment -> Compensation -> Performance -> Health -> JSON -> MQTT Wokwi Heartbeat State Machine.
+Camera Device Filtering -> Laptop Webcam Selection -> Phone Link Exclusion -> Mobile Browser Behavior ->
+YOLO26n Edge AI -> Target Tracking -> Mobile Phone Alert -> Environmental Simulation -> Compensation Engine ->
+Performance Evaluation -> Truthful Health Matrix -> JSON Logging -> MQTT Wokwi Heartbeat State Machine.
 """
 
 import sys
@@ -10,7 +12,7 @@ import time
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from camera import CameraManager
+from camera import CameraManager, filter_camera_devices
 from detector import YOLO26nDetector
 from tracker import PersistentTracker
 from environment import EnvironmentSimulator
@@ -26,8 +28,31 @@ def run_integration_test():
     print("HAADS SIH 26050 - FULL SYSTEM INTEGRATION VERIFICATION")
     print("==========================================================")
 
-    # 1. Camera Test
-    print("\n[TEST 1/10] Initializing Laptop Webcam Manager...")
+    # 1. Device Filter Unit Test — Laptop Browser Mode
+    print("\n[TEST 1/13] Testing Device-Local Laptop Camera Selection Filter...")
+    mock_devices = [
+        {"label": "Phone Link - MITTAPALLI", "deviceId": "dev_phone1"},
+        {"label": "Android Virtual Camera", "deviceId": "dev_phone2"},
+        {"label": "Integrated Camera (04f2:b6d9)", "deviceId": "dev_laptop1"},
+        {"label": "USB HD Webcam", "deviceId": "dev_laptop2"}
+    ]
+    chosen_dev, chosen_label = filter_camera_devices(mock_devices, is_mobile=False)
+    print(f"  Laptop Candidate Devices: {[d['label'] for d in mock_devices]}")
+    print(f"  Selected Device: '{chosen_label}' (ID: {chosen_dev['deviceId']})")
+    assert "MITTAPALLI" not in chosen_label, "Filter failed: Phone Link camera was selected on laptop!"
+    assert "Integrated" in chosen_label or "Webcam" in chosen_label, "Filter failed: Built-in laptop camera was not prioritized!"
+
+    # 2. Device Filter Unit Test — Mobile Browser Mode
+    print("\n[TEST 2/13] Testing Mobile Browser Camera Selection...")
+    mock_mobile_devices = [
+        {"label": "Android Front Camera", "deviceId": "dev_mobile1"}
+    ]
+    mobile_dev, mobile_label = filter_camera_devices(mock_mobile_devices, is_mobile=True)
+    print(f"  Mobile Selected Device: '{mobile_label}'")
+    assert "Android" in mobile_label, "Filter failed: Mobile camera excluded on mobile browser!"
+
+    # 3. Initializing Laptop Webcam Manager
+    print("\n[TEST 3/13] Initializing Laptop Webcam Manager...")
     cam = CameraManager(camera_index=0)
     cam_ok = cam.start()
     print(f"  Camera Status: {cam.status} | Success: {cam_ok}")
@@ -35,8 +60,8 @@ def run_integration_test():
     if frame is not None:
         print(f"  Captured Frame: {frame.shape[1]}x{frame.shape[0]} px")
 
-    # 2. YOLO26n Edge AI Detector Test
-    print("\n[TEST 2/10] Loading YOLO26n Edge AI Model...")
+    # 4. YOLO26n Edge AI Detector Test
+    print("\n[TEST 4/13] Loading YOLO26n Edge AI Model...")
     detector = YOLO26nDetector(model_name="yolo26n")
     print(f"  Detector Name: {detector.model_name}")
     print(f"  Model Loaded: {detector.model_loaded}")
@@ -44,8 +69,8 @@ def run_integration_test():
     detections = detector.detect(frame) if frame is not None else []
     print(f"  Raw Detections Count: {len(detections)}")
 
-    # 3. Tracker Test
-    print("\n[TEST 3/10] Testing Persistent Target Tracker...")
+    # 5. Tracker Test
+    print("\n[TEST 5/13] Testing Persistent Target Tracker...")
     tracker = PersistentTracker(frame_width=640, frame_height=480)
     tracks = tracker.update(detections)
     print(f"  Active Tracks: {len(tracks)}")
@@ -56,19 +81,37 @@ def run_integration_test():
     else:
         print("  No active target currently in view (Using frame center 320, 240).")
 
-    # 4. Environmental Simulator & Scenarios
-    print("\n[TEST 4/10] Testing Environmental Simulation Scenarios...")
+    # 6. Mobile Phone Detection Alert Test
+    print("\n[TEST 6/13] Testing Real Mobile Phone Detection Alert Logic...")
+    mock_phone_detection = [{
+        "bbox": [100.0, 100.0, 250.0, 400.0],
+        "center": (175.0, 250.0),
+        "width": 150.0,
+        "height": 300.0,
+        "confidence": 0.964,
+        "class_id": 67,
+        "class_name": "cell phone"
+    }]
+    phone_tracks = tracker.update(mock_phone_detection)
+    phone_target = tracker.get_primary_target()
+    assert phone_target is not None, "Target tracker failed to track mobile phone!"
+    assert phone_target.class_name == "cell phone", f"Expected 'cell phone', got '{phone_target.class_name}'"
+    print(f"  Detected Target Class: '{phone_target.class_name}' | Confidence: {phone_target.confidence * 100:.1f}% | Track ID: {phone_target.track_id}")
+    print("  🚨 TARGET ALERT PASS: Mobile Phone detected with true COCO label and confidence!")
+
+    # 7. Environmental Simulator & Scenarios
+    print("\n[TEST 7/13] Testing Environmental Simulation Scenarios...")
     env_sim = EnvironmentSimulator()
     print(f"  Default Environment: {env_sim.temperature}°C, {env_sim.pressure} hPa, {env_sim.wind_speed} km/h, {env_sim.vibration}")
     env_sim.load_scenario("COMBINED HIGH-ALTITUDE STRESS")
     env_state = env_sim.get_state()
     print(f"  Loaded 'COMBINED HIGH-ALTITUDE STRESS': {env_state['temperature']}°C, {env_state['pressure']} hPa, {env_state['wind_speed']} km/h, {env_state['vibration']}")
 
-    # 5. Environmental Compensation Engine
-    print("\n[TEST 5/10] Testing Compensation Engine...")
+    # 8. Environmental Compensation Engine
+    print("\n[TEST 8/13] Testing Compensation Engine...")
     comp_engine = EnvironmentalCompensationEngine()
-    err_x = primary.error_x if primary else 50.0
-    err_y = primary.error_y if primary else -20.0
+    err_x = phone_target.error_x if phone_target else 50.0
+    err_y = phone_target.error_y if phone_target else -20.0
     comp_results = comp_engine.calculate_compensation(env_state, err_x, err_y)
     m = comp_results["metrics"]
     print(f"  Temp Stiffness Factor: x{m['temp_stiffness_factor']}")
@@ -76,8 +119,8 @@ def run_integration_test():
     print(f"  Adaptive Stabilization Gain: {m['adaptive_stabilization_gain']}")
     print(f"  Pan Correction: {m['pan_correction_deg']}°, Tilt Correction: {m['tilt_correction_deg']}°")
 
-    # 6. Performance Engine (Uncompensated vs Compensated)
-    print("\n[TEST 6/10] Testing Deterministic Performance Engine...")
+    # 9. Performance Engine (Uncompensated vs Compensated)
+    print("\n[TEST 9/13] Testing Deterministic Performance Engine...")
     perf_engine = PerformanceEngine()
     perf_res = perf_engine.evaluate_performance(env_state, comp_results, abs(err_x))
     uncomp = perf_res["uncompensated"]
@@ -86,8 +129,8 @@ def run_integration_test():
     print(f"  WITH COMPENSATION    -> Overall: {comp['overall']}%, Stabilization: {comp['stabilization']}%")
     print(f"  Net Performance Boost: +{perf_res['overall_improvement_pct']}%")
 
-    # 7. Hardware Interface — OFFLINE State Machine Test
-    print("\n[TEST 7/10] Testing Wokwi OFFLINE Initial State...")
+    # 10. Hardware Interface — OFFLINE State Machine Test
+    print("\n[TEST 10/13] Testing Wokwi OFFLINE Initial State...")
     hw = HardwareInterface(mode="AUTO")
     hw_res_off = hw.send_pan_tilt(90 + m['pan_correction_deg'], 90 + m['tilt_correction_deg'])
     print(f"  State Machine State: {hw_res_off['state']}")
@@ -96,8 +139,8 @@ def run_integration_test():
     print(f"  Hardware Source: {hw_res_off['source']}")
     assert hw_res_off['state'] == "WOKWI_OFFLINE", "Expected WOKWI_OFFLINE when no telemetry heartbeat received."
 
-    # 8. Hardware Interface — ONLINE Telemetry Heartbeat Test
-    print("\n[TEST 8/10] Simulating Incoming Wokwi Heartbeat...")
+    # 11. Hardware Interface — ONLINE Telemetry Heartbeat Test
+    print("\n[TEST 11/13] Simulating Incoming Wokwi Heartbeat...")
     hw.process_telemetry_heartbeat({
         "device": "wokwi-esp32",
         "status": "online",
@@ -116,28 +159,33 @@ def run_integration_test():
     print(f"  Hardware Source: {hw_res_on['source']}")
     assert hw_res_on['state'] == "WOKWI_ONLINE", "Expected WOKWI_ONLINE after heartbeat payload received."
 
-    # 9. Subsystem Health & Alerts Verification
-    print("\n[TEST 9/10] Testing Subsystem Health Matrix with Live Wokwi Link...")
+    # 12. Subsystem Health Matrix State Transitions
+    print("\n[TEST 12/13] Testing Subsystem Health Matrix Truthful State Transitions...")
     health_mon = HealthMonitor()
-    health_res = health_mon.update_health(cam.status, detector.model_loaded, len(tracks), env_state, hw_res_on, perf_res)
-    print(f"  Overall Health Score: {health_res['overall_health_pct']}%")
-    print(f"  Subsystem Health Matrix: {health_res['subsystems']}")
-    print(f"  Active Alerts Count: {len(health_res['alerts'])}")
-    for alt in health_res["alerts"]:
-        print(f"    - [{alt['level']}] {alt['code']}: {alt['message']}")
+    
+    # Test WAITING FOR PERMISSION state
+    h_wait = health_mon.update_health("WAITING FOR PERMISSION", "WAITING", "WAITING", env_state, hw_res_on, perf_res)
+    assert h_wait["subsystems"]["camera"] == "WAITING FOR PERMISSION", "Expected 'WAITING FOR PERMISSION' camera status!"
+    assert h_wait["subsystems"]["ai_detector"] == "WAITING", "Expected 'WAITING' detector status before frames!"
 
-    # 10. Data Manager (system_data.json)
-    print("\n[TEST 10/10] Testing Atomic system_data.json Data Manager...")
+    # Test ONLINE state
+    h_online = health_mon.update_health("ONLINE", "ACTIVE", "ACTIVE", env_state, hw_res_on, perf_res)
+    assert h_online["subsystems"]["camera"] == "ONLINE", "Expected 'ONLINE' camera status when frames arrive!"
+    assert h_online["subsystems"]["ai_detector"] == "ACTIVE", "Expected 'ACTIVE' detector status after frame processing!"
+    print(f"  Truthful Health Matrix: {h_online['subsystems']}")
+
+    # 13. Data Manager (system_data.json)
+    print("\n[TEST 13/13] Testing Atomic system_data.json Data Manager...")
     dm = SystemDataManager()
     full_state = {
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-        "camera": {"status": cam.status, "fps": round(cam.fps, 1)},
-        "detection": {"model_name": detector.model_name, "object_count": len(detections)},
-        "tracking": {"target_x": 320.0, "target_y": 240.0, "error_x": err_x, "error_y": err_y},
+        "camera": {"status": cam.status, "device_label": chosen_label, "fps": round(cam.fps, 1)},
+        "detection": {"model_name": detector.model_name, "object_count": len(mock_phone_detection)},
+        "tracking": {"target_x": phone_target.target_x, "target_y": phone_target.target_y, "error_x": err_x, "error_y": err_y},
         "environment": env_state,
         "compensation": comp_results,
         "performance": perf_res,
-        "health": health_res,
+        "health": h_online,
         "hardware": hw_res_on
     }
     saved_ok = dm.save_state(full_state)
@@ -148,7 +196,7 @@ def run_integration_test():
     # Cleanup
     cam.stop()
     print("\n==========================================================")
-    print("ALL INTEGRATION TESTS COMPLETED SUCCESSFULLY!")
+    print("ALL 13 INTEGRATION & UNIT TESTS COMPLETED SUCCESSFULLY!")
     print("==========================================================")
 
 
