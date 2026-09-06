@@ -3,6 +3,7 @@ HAADS SIH 26050 - Hardware Interface Abstraction Module
 Provides MQTT-based telemetry link with Wokwi ESP32 Hardware Simulation,
 plus HTTP test endpoint fallback. Implements genuine 5-second heartbeat state machine:
 WOKWI_OFFLINE, WOKWI_CONNECTING, WOKWI_ONLINE.
+Uses persistent module-level MQTT singleton client safe across Streamlit reruns.
 """
 
 import time
@@ -21,6 +22,63 @@ except ImportError:
 
 WOKWI_ONLINE_TIMEOUT = 5.0  # seconds
 
+# Global persistent MQTT singleton state
+_GLOBAL_MQTT_CLIENT = None
+_GLOBAL_MQTT_LOCK = threading.Lock()
+_GLOBAL_LAST_HEARTBEAT_TIME = 0.0
+_GLOBAL_LAST_TELEMETRY = {
+    "device": "wokwi-esp32",
+    "temperature": 20.0,
+    "pressure": 950.0,
+    "wind": 5.0,
+    "vibration": 0.1,
+    "pan": 90,
+    "tilt": 90,
+    "timestamp": 0
+}
+
+
+def _ensure_mqtt_singleton(broker="broker.hivemq.com", port=1883, topic="isr/sih/26050/telemetry"):
+    global _GLOBAL_MQTT_CLIENT
+    with _GLOBAL_MQTT_LOCK:
+        if _GLOBAL_MQTT_CLIENT is None and MQTT_AVAILABLE:
+            def on_connect(client, userdata, flags, rc, properties=None):
+                if rc == 0:
+                    try:
+                        client.subscribe(topic)
+                        print(f"[HardwareInterface] Persistent MQTT Client Subscribed to '{topic}'.")
+                    except Exception as e:
+                        print(f"[HardwareInterface] Subscribe note: {e}")
+                else:
+                    print(f"[HardwareInterface] MQTT Connect failed with code {rc}.")
+
+            def on_message(client, userdata, msg):
+                global _GLOBAL_LAST_HEARTBEAT_TIME
+                try:
+                    payload_str = msg.payload.decode("utf-8")
+                    data = json.loads(payload_str)
+                    _GLOBAL_LAST_HEARTBEAT_TIME = time.time()
+                    if isinstance(data, dict):
+                        _GLOBAL_LAST_TELEMETRY.update(data)
+                except Exception:
+                    pass
+
+            try:
+                client = mqtt.Client(
+                    mqtt.CallbackAPIVersion.VERSION2 if hasattr(mqtt, "CallbackAPIVersion") else None,
+                    client_id=f"HAADS-Python-{int(time.time())}"
+                )
+                client.on_connect = on_connect
+                client.on_message = on_message
+                client.connect_async(broker, port, keepalive=30)
+                client.loop_start()
+                _GLOBAL_MQTT_CLIENT = client
+                print(f"[HardwareInterface] Started persistent MQTT background network loop on {broker}:{port}.")
+            except Exception as e:
+                print(f"[HardwareInterface] Persistent MQTT setup note: {e}")
+
+    return _GLOBAL_MQTT_CLIENT
+
 
 class HardwareInterface:
     def __init__(self, mode="AUTO", mqtt_broker="broker.hivemq.com", mqtt_port=1883):
@@ -30,61 +88,15 @@ class HardwareInterface:
         self.mqtt_topic_telemetry = "isr/sih/26050/telemetry"
         self.mqtt_topic_servo = "isr/sih/26050/servo"
 
-        self.last_heartbeat_time = 0.0
-        self.mqtt_connected = False
-        self.mqtt_client = None
-
-        # Virtual/Real Actuator & Sensor Telemetry Cache
+        # Actuator State Cache
         self.pan_angle = 90
         self.tilt_angle = 90
-        self.last_telemetry = {
-            "device": "wokwi-esp32",
-            "temperature": 20.0,
-            "pressure": 950.0,
-            "wind": 5.0,
-            "vibration": 0.1,
-            "pan": 90,
-            "tilt": 90,
-            "timestamp": 0
-        }
 
-        # Initialize MQTT Listener Non-blocking Thread
-        if MQTT_AVAILABLE:
-            self._start_mqtt_client()
+        # Ensure singleton MQTT background client is active
+        _ensure_mqtt_singleton(self.mqtt_broker, self.mqtt_port, self.mqtt_topic_telemetry)
 
-        # Initialize Local HTTP Test Endpoint
+        # Ensure HTTP test bridge server is active
         self._start_local_http_test_bridge()
-
-    def _start_mqtt_client(self):
-        def on_connect(client, userdata, flags, rc, properties=None):
-            if rc == 0:
-                self.mqtt_connected = True
-                client.subscribe(self.mqtt_topic_telemetry)
-                print(f"[HardwareInterface] Connected to MQTT broker '{self.mqtt_broker}'. Subscribed to '{self.mqtt_topic_telemetry}'.")
-            else:
-                self.mqtt_connected = False
-
-        def on_message(client, userdata, msg):
-            try:
-                payload_str = msg.payload.decode("utf-8")
-                data = json.loads(payload_str)
-                self.process_telemetry_heartbeat(data)
-            except Exception as e:
-                pass
-
-        def mqtt_start():
-            try:
-                client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2 if hasattr(mqtt, "CallbackAPIVersion") else None, client_id=f"HAADS-Python-{int(time.time())}")
-                client.on_connect = on_connect
-                client.on_message = on_message
-                self.mqtt_client = client
-                client.connect_async(self.mqtt_broker, self.mqtt_port, keepalive=30)
-                client.loop_start()
-            except Exception as e:
-                print(f"[HardwareInterface] MQTT init note: {e}")
-
-        t = threading.Thread(target=mqtt_start, daemon=True)
-        t.start()
 
     def _start_local_http_test_bridge(self, port=8180):
         hw_self = self
@@ -128,10 +140,11 @@ class HardwareInterface:
         t.start()
 
     def process_telemetry_heartbeat(self, data):
-        """Processes incoming telemetry heartbeat payload (from MQTT or HTTP test endpoint)."""
-        self.last_heartbeat_time = time.time()
+        """Processes incoming telemetry payload (updates global heartbeat & state)."""
+        global _GLOBAL_LAST_HEARTBEAT_TIME, _GLOBAL_LAST_TELEMETRY
+        _GLOBAL_LAST_HEARTBEAT_TIME = time.time()
         if isinstance(data, dict):
-            self.last_telemetry.update(data)
+            _GLOBAL_LAST_TELEMETRY.update(data)
             if "pan" in data:
                 self.pan_angle = int(data["pan"])
             if "tilt" in data:
@@ -139,15 +152,15 @@ class HardwareInterface:
 
     def get_connection_state(self):
         """
-        Determines current state machine state:
+        Determines current state machine state based strictly on last heartbeat time:
         - WOKWI_ONLINE: Heartbeat received within last 5 seconds.
         - WOKWI_CONNECTING: Heartbeat received within 5-8 seconds.
         - WOKWI_OFFLINE: No heartbeat for >5 seconds (or never received).
         """
-        if self.last_heartbeat_time <= 0:
+        if _GLOBAL_LAST_HEARTBEAT_TIME <= 0:
             return "WOKWI_OFFLINE"
         
-        elapsed = time.time() - self.last_heartbeat_time
+        elapsed = time.time() - _GLOBAL_LAST_HEARTBEAT_TIME
         if elapsed <= WOKWI_ONLINE_TIMEOUT:
             return "WOKWI_ONLINE"
         elif elapsed <= WOKWI_ONLINE_TIMEOUT + 3.0:
@@ -175,6 +188,8 @@ class HardwareInterface:
             active_control_mode = "SOFTWARE SIMULATION FALLBACK"
             source = "SOFTWARE_SIMULATION"
 
+        hb_age = round(time.time() - _GLOBAL_LAST_HEARTBEAT_TIME, 1) if _GLOBAL_LAST_HEARTBEAT_TIME > 0 else None
+
         return {
             "state": state_str,
             "is_connected": is_online,
@@ -182,21 +197,21 @@ class HardwareInterface:
             "python_link_status": python_link_status,
             "active_control_mode": active_control_mode,
             "source": source,
-            "last_heartbeat_age_sec": round(time.time() - self.last_heartbeat_time, 1) if self.last_heartbeat_time > 0 else None,
+            "last_heartbeat_age_sec": hb_age,
             "pan_angle": self.pan_angle,
             "tilt_angle": self.tilt_angle,
-            "telemetry": self.last_telemetry
+            "telemetry": _GLOBAL_LAST_TELEMETRY
         }
 
     def read_sensors(self):
         state_info = self.get_state()
         if state_info["is_connected"]:
-            vib_val = float(self.last_telemetry.get("vibration", 0.1))
+            vib_val = float(_GLOBAL_LAST_TELEMETRY.get("vibration", 0.1))
             vib_str = "HIGH" if vib_val > 0.6 else ("MEDIUM" if vib_val > 0.3 else "LOW")
             pots = {
-                "temperature": float(self.last_telemetry.get("temperature", 20.0)),
-                "pressure": float(self.last_telemetry.get("pressure", 950.0)),
-                "wind": float(self.last_telemetry.get("wind", 5.0)),
+                "temperature": float(_GLOBAL_LAST_TELEMETRY.get("temperature", 20.0)),
+                "pressure": float(_GLOBAL_LAST_TELEMETRY.get("pressure", 950.0)),
+                "wind": float(_GLOBAL_LAST_TELEMETRY.get("wind", 5.0)),
                 "vibration": vib_str
             }
             imu = {"accel_x": 0.01, "accel_y": 0.02, "accel_z": 9.81, "gyro_x": 0.0, "gyro_y": 0.0, "gyro_z": 0.0}
@@ -209,10 +224,10 @@ class HardwareInterface:
         self.pan_angle = int(np.clip(target_pan, 0, 180))
         self.tilt_angle = int(np.clip(target_tilt, 0, 180))
 
-        if self.mqtt_client and self.mqtt_connected:
+        if _GLOBAL_MQTT_CLIENT and hasattr(_GLOBAL_MQTT_CLIENT, 'is_connected') and _GLOBAL_MQTT_CLIENT.is_connected():
             try:
                 cmd = f"SERVO:{self.pan_angle},{self.tilt_angle}"
-                self.mqtt_client.publish(self.mqtt_topic_servo, cmd)
+                _GLOBAL_MQTT_CLIENT.publish(self.mqtt_topic_servo, cmd)
             except Exception:
                 pass
 

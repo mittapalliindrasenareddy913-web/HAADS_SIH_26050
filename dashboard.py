@@ -2,6 +2,7 @@
 HAADS SIH 26050 - Streamlit Engineering Dashboard Module
 Renders the 11-section engineering dashboard for High Altitude Anti-Drone System prototype.
 SIH Problem Statement 26050 Alignment: High Altitude Performance Optimization and Robust Design.
+Includes automatic 2-second dashboard refresh and heartbeat-driven Wokwi status.
 """
 
 import streamlit as st
@@ -73,6 +74,10 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
     st.info("💡 **Objective**: Environmental compensation and robust precision tracking for reliable high-altitude operation.")
     st.markdown("---")
 
+    # Read current Wokwi state (driven strictly by real MQTT heartbeat!)
+    hw_state = hw_interface.get_state()
+    is_wokwi_online = hw_state.get("is_connected", False)
+
     # ----------------------------------------------------
     # SIDEBAR: CONTROLS & ENVIRONMENT PRESETS
     # ----------------------------------------------------
@@ -107,10 +112,6 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
     comp_engine.enable_vibration_comp = st.sidebar.checkbox("Enable Vibration Compensation", value=comp_engine.enable_vibration_comp)
 
     st.sidebar.markdown("---")
-    st.sidebar.subheader("Refresh & Test Helpers")
-    auto_refresh = st.sidebar.checkbox("🔄 Enable Auto Live Refresh Loop (1s)", value=False)
-    
-    st.sidebar.markdown("---")
     st.sidebar.caption("🧪 **Wokwi Test Telemetry Helper**")
     if st.sidebar.button("Simulate Wokwi Heartbeat Signal"):
         hw_interface.process_telemetry_heartbeat({
@@ -126,15 +127,12 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
         })
         st.sidebar.success("Sent simulated MQTT Heartbeat to Python!")
 
-    # Read current Wokwi state (driven strictly by heartbeat)
-    hw_state = hw_interface.get_state()
-
     # ----------------------------------------------------
-    # INPUT SELECTION & FRAME PREPARATION
+    # TARGET INPUT SELECTION & FRAME PREPARATION
     # ----------------------------------------------------
     target_mode = st.radio(
         "Select Target Input Source:",
-        ["Synthetic Drone Target", "Scan Target with Camera", "Upload Image"],
+        ["Synthetic Drone Target", "Scan Target with Camera"],
         index=0,
         horizontal=True
     )
@@ -142,9 +140,10 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
     frame = None
     cam_source = "SYNTHETIC TARGET"
     cam_status_str = "STANDBY"
+    is_live_camera = False
 
     if target_mode == "Synthetic Drone Target":
-        st.markdown("<span class='sim-badge'>DEFAULT DEMONSTRATION MODE — SYNTHETIC TARGET</span>", unsafe_allow_html=True)
+        st.markdown("<span class='sim-badge'>SYNTHETIC TARGET — SIMULATION ONLY</span>", unsafe_allow_html=True)
         c_sim1, c_sim2 = st.columns(2)
         with c_sim1:
             sim_target_x = st.slider("Simulated Target X Position", 50, 590, 420, key="sim_tx")
@@ -156,40 +155,30 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
         cam_status_str = "SYNTHETIC DRONE TARGET — SIMULATION ONLY"
 
     elif target_mode == "Scan Target with Camera":
-        st.markdown("<span class='real-badge'>CAMERA SCAN WORKFLOW</span>", unsafe_allow_html=True)
-        st.caption("Initial State: SYSTEM READY — No target scanned yet. Click 'Scan Target Frame' to capture and process.")
+        st.markdown("<span class='real-badge'>LIVE CAMERA FEED — REAL-TIME OBJECT SCANNING</span>", unsafe_allow_html=True)
+        is_live_camera = True
         
-        cam_img_buffer = st.camera_input("📷 Click to Scan Target Frame", key="camera_scan_input")
-        if cam_img_buffer is not None:
-            bytes_data = cam_img_buffer.getvalue()
-            file_bytes = np.frombuffer(bytes_data, np.uint8)
-            decoded_frame = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
-            if decoded_frame is not None:
-                frame = cv2.resize(decoded_frame, (640, 480))
-                cam_source = "BROWSER CAMERA"
-                cam_status_str = "ONLINE (CAMERA FRAME PROCESSED)"
+        # Read live hardware camera frame from CameraManager
+        cam_success, live_frame = camera_mgr.get_frame()
+        if cam_success and live_frame is not None and camera_mgr.status == "ONLINE":
+            frame = live_frame
+            cam_source = "LIVE CAMERA"
+            cam_status_str = f"ONLINE (LIVE WEBCAM FEED - {camera_mgr.fps:.1f} FPS)"
         else:
-            # When camera option chosen but frame not captured yet: show clear standby message
-            st.info("SYSTEM READY — Click 'Take Photo' above to capture a frame for YOLO26n detection.")
-            frame = create_synthetic_drone_frame(320, 240)
-            cam_source = "CAMERA STANDBY"
-            cam_status_str = "SYSTEM READY — AWAITING CAPTURE"
-
-    elif target_mode == "Upload Image":
-        st.markdown("<span class='real-badge'>IMAGE FILE ANALYSIS</span>", unsafe_allow_html=True)
-        uploaded_file = st.file_uploader("Upload Drone or Target Image File", type=["jpg", "jpeg", "png"], key="img_uploader")
-        if uploaded_file is not None:
-            bytes_data = uploaded_file.getvalue()
-            file_bytes = np.frombuffer(bytes_data, np.uint8)
-            decoded_frame = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
-            if decoded_frame is not None:
-                frame = cv2.resize(decoded_frame, (640, 480))
-                cam_source = "UPLOADED IMAGE"
-                cam_status_str = "ONLINE (IMAGE PROCESSED)"
-        else:
-            frame = create_synthetic_drone_frame(320, 240)
-            cam_source = "UPLOAD STANDBY"
-            cam_status_str = "AWAITING FILE UPLOAD"
+            cam_img_buffer = st.camera_input("📷 Live Camera Streamer / Frame Grabber", key="camera_scan_input")
+            if cam_img_buffer is not None:
+                bytes_data = cam_img_buffer.getvalue()
+                file_bytes = np.frombuffer(bytes_data, np.uint8)
+                decoded_frame = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+                if decoded_frame is not None:
+                    frame = cv2.resize(decoded_frame, (640, 480))
+                    cam_source = "LIVE CAMERA SNAPSHOT"
+                    cam_status_str = "ONLINE (BROWSER CAMERA)"
+            else:
+                st.info("SYSTEM READY — Click 'Take Photo' above to scan live target.")
+                frame = create_synthetic_drone_frame(320, 240)
+                cam_source = "CAMERA STANDBY"
+                cam_status_str = "SYSTEM READY — AWAITING CAPTURE"
 
     if frame is None:
         frame = create_synthetic_drone_frame(420, 180)
@@ -197,11 +186,39 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
     # ----------------------------------------------------
     # SYSTEM PIPELINE EXECUTION
     # ----------------------------------------------------
-    # 1. Edge AI detection
-    raw_detections = detector.detect(frame) if detector.model_loaded else []
-
-    # If synthetic target mode is active and YOLO returned no detections, synthesize target entry
-    if len(raw_detections) == 0 and "SYNTHETIC" in cam_source:
+    if is_live_camera and cam_source in ["LIVE CAMERA", "LIVE CAMERA SNAPSHOT"]:
+        # Run real YOLO26n detection on live camera frame
+        raw_detections = detector.detect(frame) if detector.model_loaded else []
+        
+        if len(raw_detections) == 0:
+            target_cls = "NO TARGET DETECTED"
+            confidence = 0.0
+            track_id = None
+            target_x, target_y = 320.0, 240.0
+            error_x, error_y = 0.0, 0.0
+            active_tracks = []
+            primary_target = None
+        else:
+            active_tracks = tracker.update(raw_detections)
+            primary_target = tracker.get_primary_target()
+            if primary_target:
+                target_x = primary_target.target_x
+                target_y = primary_target.target_y
+                error_x = primary_target.error_x
+                error_y = primary_target.error_y
+                track_id = primary_target.track_id
+                confidence = primary_target.confidence
+                target_cls = primary_target.class_name
+                bbox = primary_target.bbox
+            else:
+                target_x, target_y = 320.0, 240.0
+                error_x, error_y = 0.0, 0.0
+                track_id = None
+                confidence = 0.0
+                target_cls = "N/A"
+                bbox = []
+    else:
+        # Synthetic Target Mode
         raw_detections = [{
             "bbox": [sim_target_x - 30, sim_target_y - 20, sim_target_x + 30, sim_target_y + 20],
             "center": (float(sim_target_x), float(sim_target_y)),
@@ -211,50 +228,40 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
             "class_id": 0,
             "class_name": "micro_drone"
         }]
+        active_tracks = tracker.update(raw_detections)
+        primary_target = tracker.get_primary_target()
+        if primary_target:
+            target_x = primary_target.target_x
+            target_y = primary_target.target_y
+            error_x = primary_target.error_x
+            error_y = primary_target.error_y
+            track_id = primary_target.track_id
+            confidence = primary_target.confidence
+            target_cls = "SYNTHETIC DRONE TARGET"
+            bbox = primary_target.bbox
 
-    # 2. Object tracking
-    active_tracks = tracker.update(raw_detections)
-    primary_target = tracker.get_primary_target()
-
-    if primary_target:
-        target_x = primary_target.target_x
-        target_y = primary_target.target_y
-        error_x = primary_target.error_x
-        error_y = primary_target.error_y
-        track_id = primary_target.track_id
-        confidence = primary_target.confidence
-        target_cls = primary_target.class_name
-        bbox = primary_target.bbox
-    else:
-        target_x, target_y = 320.0, 240.0
-        error_x, error_y = 0.0, 0.0
-        track_id = None
-        confidence = 0.0
-        target_cls = "N/A"
-        bbox = []
-
-    # 3. Environmental state & compensation calculations
+    # Environmental state & compensation calculations
     env_state = env_sim.get_state()
     comp_state = comp_engine.calculate_compensation(env_state, error_x, error_y)
 
-    # 4. Pointing calculation
+    # Pointing calculation
     base_pan, base_tilt = 90, 90
     pan_calc = base_pan + comp_state["metrics"]["pan_correction_deg"]
     tilt_calc = base_tilt + comp_state["metrics"]["tilt_correction_deg"]
 
     hw_state = hw_interface.send_pan_tilt(pan_calc, tilt_calc)
 
-    # 5. Performance evaluation
+    # Performance evaluation
     target_error_dist = math.hypot(error_x, error_y)
     perf_results = perf_engine.evaluate_performance(env_state, comp_state, target_error_dist)
 
-    # 6. Health & Alerts
+    # Health & Alerts
     health_results = health_mon.update_health(
         cam_status_str, detector.model_loaded, len(active_tracks),
         env_state, hw_state, perf_results
     )
 
-    # 7. Update system_data.json
+    # Update system_data.json
     full_state_data = {
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
         "camera": {"status": cam_status_str, "fps": round(camera_mgr.fps, 1), "source": cam_source},
@@ -289,9 +296,9 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
     with ov2:
         st.metric("System Health", f"{health_results['overall_health_pct']}%")
     with ov3:
-        st.metric("Detection Status", "ACTIVE" if len(raw_detections) > 0 else "READY")
+        st.metric("Detection Status", "ACTIVE" if (len(raw_detections) > 0 and target_cls != "NO TARGET DETECTED") else "NO TARGET")
     with ov4:
-        st.metric("Tracking Status", f"Track ID-{track_id}" if track_id else "SEARCHING")
+        st.metric("Tracking Status", f"Track ID-{track_id}" if track_id else "NO ACTIVE TARGET")
     with ov5:
         st.metric("Overall Performance", f"{perf_results['compensated']['overall']}%", delta=f"+{perf_results['overall_improvement_pct']}% Comp")
 
@@ -329,12 +336,12 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
         st.write(f"• **Input Source**: `{cam_source}`")
         st.write(f"• **Detected Class**: **`{target_cls}`**")
         st.write(f"• **Confidence Score**: **`{confidence * 100:.1f}%`**")
-        st.write(f"• **Track Object ID**: **`{track_id if track_id else 'N/A'}`**")
+        st.write(f"• **Track Object ID**: **`{track_id if track_id else 'NO ACTIVE TARGET'}`**")
         st.write(f"• **Inference Latency**: `{detector.last_inference_time_ms:.1f} ms`")
         if "SYNTHETIC" in cam_source:
             st.caption("ℹ️ *Mode: SYNTHETIC TARGET — SIMULATION ONLY*")
         else:
-            st.caption("ℹ️ *Model outputs actual detected COCO object class.*")
+            st.caption("ℹ️ *Generic YOLO26n Object Detection. Displays actual COCO class labels.*")
 
     st.markdown("---")
 
@@ -344,13 +351,13 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
     st.subheader("3. Target Tracking & Precision Pointing")
     tp1, tp2, tp3 = st.columns(3)
     with tp1:
-        st.metric("Target Center X / Y", f"({target_x:.1f}, {target_y:.1f})")
-        st.metric("Tracking Error Distance", f"{target_error_dist:.1f} px")
+        st.metric("Target Center X / Y", f"({target_x:.1f}, {target_y:.1f})" if target_cls != "NO TARGET DETECTED" else "N/A")
+        st.metric("Tracking Error Distance", f"{target_error_dist:.1f} px" if target_cls != "NO TARGET DETECTED" else "0.0 px")
     with tp2:
-        st.metric("Pointing Error X", f"{error_x:+.1f} px")
-        st.metric("Pointing Error Y", f"{error_y:+.1f} px")
+        st.metric("Pointing Error X", f"{error_x:+.1f} px" if target_cls != "NO TARGET DETECTED" else "0.0 px")
+        st.metric("Pointing Error Y", f"{error_y:+.1f} px" if target_cls != "NO TARGET DETECTED" else "0.0 px")
     with tp3:
-        actuator_label = "WOKWI PAN/TILT SERVO" if hw_state.get("is_connected", False) else "Virtual / Simulated Pan-Tilt"
+        actuator_label = "WOKWI PAN/TILT SERVO" if is_wokwi_online else "Virtual / Simulated Pan-Tilt"
         st.metric("Pan Servo Angle", f"{hw_state['pan_angle']}°", help=actuator_label)
         st.metric("Tilt Servo Angle", f"{hw_state['tilt_angle']}°", help=actuator_label)
 
@@ -466,13 +473,10 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
     # 8. HARDWARE SIMULATION — WOKWI
     # ----------------------------------------------------
     st.subheader("8. Hardware Simulation — Wokwi")
-    
-    is_wokwi_online = hw_state.get("is_connected", False)
-    state_name = hw_state.get("state", "WOKWI_OFFLINE")
 
     if is_wokwi_online:
         st.markdown("<span class='real-badge'>WOKWI HARDWARE LINK: ONLINE</span>", unsafe_allow_html=True)
-        st.success(f"PYTHON HARDWARE LINK: CONNECTED | ACTIVE CONTROL MODE: LIVE WOKWI (MQTT)")
+        st.success("PYTHON HARDWARE LINK: CONNECTED | ACTIVE CONTROL MODE: LIVE WOKWI")
         st.caption(f"MQTT Topic: `isr/sih/26050/telemetry` | Last Heartbeat Age: {hw_state.get('last_heartbeat_age_sec', 0)}s ago")
     else:
         st.markdown("<span class='offline-badge'>WOKWI HARDWARE LINK: OFFLINE</span>", unsafe_allow_html=True)
@@ -487,7 +491,7 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
     with h_col2:
         st.write(f"• Pan/Tilt Servos: **{'ONLINE' if is_wokwi_online else 'NOT CONNECTED'}**")
         st.write(f"• Potentiometers: **{'ONLINE' if is_wokwi_online else 'NOT CONNECTED'}**")
-        st.write(f"• Communication: **{'CONNECTED (MQTT)' if is_wokwi_online else 'NOT CONNECTED'}**")
+        st.write(f"• Communication: **{'CONNECTED' if is_wokwi_online else 'NOT CONNECTED'}**")
 
     st.markdown("---")
 
@@ -538,10 +542,11 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
 
     st.caption("🔒 *Note on Neutralization Scope: Authorized-response / operator-alert interface is outside the physical prototype scope.*")
 
-    # Auto rerun handling if enabled
-    if auto_refresh:
-        time.sleep(1.0)
-        if hasattr(st, 'rerun'):
-            st.rerun()
-        elif hasattr(st, 'experimental_rerun'):
-            st.experimental_rerun()
+    # ----------------------------------------------------
+    # AUTOMATIC DASHBOARD RERUN LOOP (Every 2 seconds)
+    # ----------------------------------------------------
+    time.sleep(2.0)
+    if hasattr(st, 'rerun'):
+        st.rerun()
+    elif hasattr(st, 'experimental_rerun'):
+        st.experimental_rerun()

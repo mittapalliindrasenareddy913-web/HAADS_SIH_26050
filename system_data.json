@@ -1,18 +1,18 @@
 {
-  "timestamp": "2026-09-06 16:40:39",
+  "timestamp": "2026-09-06 16:51:38",
   "camera": {
     "status": "ONLINE",
     "fps": 0.0
   },
   "detection": {
     "model_name": "YOLO26n Edge AI \u2014 Object Detection & Tracking",
-    "object_count": 1
+    "object_count": 2
   },
   "tracking": {
     "target_x": 320.0,
     "target_y": 240.0,
-    "error_x": 33.80000000000001,
-    "error_y": -15.300000000000011
+    "error_x": 96.30000000000001,
+    "error_y": 119.30000000000001
   },
   "environment": {
     "temperature": -20.0,
@@ -41,25 +41,25 @@
       "pressure_damping_ratio": 0.592,
       "adaptive_stabilization_gain": 0.2,
       "estimated_motor_load_pct": 70.0,
-      "pan_correction_deg": 8.76,
-      "tilt_correction_deg": -3.06
+      "pan_correction_deg": 21.26,
+      "tilt_correction_deg": 23.86
     }
   },
   "performance": {
     "label": "SIMULATED PERFORMANCE ESTIMATE",
     "uncompensated": {
       "detection": 75.1,
-      "tracking": 62.5,
+      "tracking": 57.0,
       "stabilization": 32.8,
-      "overall": 53.8
+      "overall": 51.9
     },
     "compensated": {
       "detection": 90.5,
-      "tracking": 85.0,
+      "tracking": 82.3,
       "stabilization": 78.2,
-      "overall": 83.7
+      "overall": 82.7
     },
-    "overall_improvement_pct": 29.9
+    "overall_improvement_pct": 30.8
   },
   "health": {
     "overall_health_pct": 100,
@@ -96,7 +96,7 @@
         "message": "High structural vibration detected. High-frequency filtering active."
       }
     ],
-    "timestamp": "2026-09-06 16:40:39"
+    "timestamp": "2026-09-06 16:51:38"
   },
   "hardware": {
     "state": "WOKWI_ONLINE",
@@ -116,7 +116,7 @@
       "vibration": 0.5,
       "pan": 95,
       "tilt": 85,
-      "timestamp": 1788693039.3996954,
+      "timestamp": 1788693698.8187132,
       "status": "online"
     }
   }
