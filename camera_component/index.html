@@ -81,24 +81,34 @@
         const deviceTitle = document.getElementById('device-title');
 
         let frameCount = 0;
-        let isStreaming = false;
         let captureInterval = null;
+
+        function sendMsgToStreamlit(msgObj) {
+            try {
+                window.parent.postMessage(msgObj, "*");
+            } catch(e) {}
+            try {
+                if (window.top && window.top !== window.parent) {
+                    window.top.postMessage(msgObj, "*");
+                }
+            } catch(e) {}
+        }
 
         function setStreamlitHeight() {
             const height = document.body.scrollHeight || 420;
-            window.parent.postMessage({
+            sendMsgToStreamlit({
                 isStreamlitMessage: true,
                 type: "streamlit:setFrameHeight",
                 height: height
-            }, "*");
+            });
         }
 
         function sendToStreamlit(data) {
-            window.parent.postMessage({
+            sendMsgToStreamlit({
                 isStreamlitMessage: true,
                 type: "streamlit:setComponentValue",
                 value: data
-            }, "*");
+            });
         }
 
         function setError(type, msg) {
@@ -114,11 +124,14 @@
                 frame: null,
                 width: 0,
                 height: 0,
-                frame_count: 0,
-                api_supported: !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia),
+                client_frame_count: 0,
+                video_ready_state: 0,
+                video_paused: true,
                 video_playing: false,
+                src_object_exists: false,
                 track_state: 'ENDED',
-                device_label: 'LOCAL DEVICE CAMERA'
+                device_label: 'LOCAL DEVICE CAMERA',
+                timestamp: Date.now()
             });
             setStreamlitHeight();
         }
@@ -130,7 +143,6 @@
             }
 
             try {
-                // Request camera of whatever device the website is currently running on (Laptop / Phone / Tablet / Desktop)
                 const stream = await navigator.mediaDevices.getUserMedia({
                     video: true,
                     audio: false
@@ -152,10 +164,9 @@
                 statusBadge.textContent = '🟢 CAMERA ONLINE';
                 errorContainer.style.display = 'none';
                 video.style.display = 'block';
-                isStreaming = true;
                 setStreamlitHeight();
 
-                // Frame capture loop at 5 FPS to feed Python YOLO26n & tracker
+                // Stream frames to Python @ ~6 FPS
                 if (captureInterval) clearInterval(captureInterval);
                 captureInterval = setInterval(() => {
                     if (video.readyState >= 2 && video.videoWidth > 0 && !video.paused) {
@@ -165,20 +176,25 @@
                         ctx.drawImage(video, 0, 0, 640, 480);
                         const dataUrl = canvas.toDataURL('image/jpeg', 0.65);
 
+                        const activeTrack = (video.srcObject && video.srcObject.getVideoTracks) ? video.srcObject.getVideoTracks()[0] : null;
+
                         sendToStreamlit({
                             status: 'ONLINE',
                             error: null,
                             frame: dataUrl,
                             width: video.videoWidth,
                             height: video.videoHeight,
-                            frame_count: frameCount,
-                            api_supported: true,
+                            client_frame_count: frameCount,
+                            video_ready_state: video.readyState,
+                            video_paused: video.paused,
                             video_playing: !video.paused && !video.ended,
-                            track_state: track.readyState,
-                            device_label: devLabel
+                            src_object_exists: !!video.srcObject,
+                            track_state: activeTrack ? activeTrack.readyState : 'NO_TRACK',
+                            device_label: devLabel,
+                            timestamp: Date.now()
                         });
                     }
-                }, 200);
+                }, 160);
 
             } catch (err) {
                 console.error('[DeviceCamera] getUserMedia error:', err);
@@ -194,15 +210,20 @@
             }
         }
 
-        // Inform Streamlit framework component ready
-        window.parent.postMessage({
+        // Streamlit Component Protocol Handlers
+        window.addEventListener("message", function(event) {
+            if (event.data && event.data.type === "streamlit:render") {
+                setStreamlitHeight();
+            }
+        });
+
+        sendMsgToStreamlit({
             isStreamlitMessage: true,
             type: "streamlit:componentReady",
             apiVersion: 1
-        }, "*");
+        });
         setStreamlitHeight();
 
-        // Auto-initialize camera stream
         window.addEventListener('load', initCamera);
         initCamera();
     })();

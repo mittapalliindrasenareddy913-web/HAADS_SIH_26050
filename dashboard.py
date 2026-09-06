@@ -145,24 +145,43 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
 
     demo_proxy_mode = st.checkbox("📱 Enable Demo Proxy Target Mode (Use Cell Phone / Object as Drone-Proxy Test)", value=True)
 
+    # Initialize Persistent Python Frame Transport & YOLO Session State
+    if "python_real_frames_count" not in st.session_state:
+        st.session_state["python_real_frames_count"] = 0
+    if "last_processed_frame_ts" not in st.session_state:
+        st.session_state["last_processed_frame_ts"] = 0
+    if "last_frame_recv_time" not in st.session_state:
+        st.session_state["last_frame_recv_time"] = 0.0
+    if "yolo_inference_count" not in st.session_state:
+        st.session_state["yolo_inference_count"] = 0
+    if "last_yolo_inference_time" not in st.session_state:
+        st.session_state["last_yolo_inference_time"] = 0.0
+    if "yolo_engine_state" not in st.session_state:
+        st.session_state["yolo_engine_state"] = "WAITING FOR FRAMES"
+    if "tracking_engine_state" not in st.session_state:
+        st.session_state["tracking_engine_state"] = "WAITING FOR FRAMES"
+    if "latest_detection_results" not in st.session_state:
+        st.session_state["latest_detection_results"] = {
+            "target_cls": "NO TARGET DETECTED",
+            "confidence": None,
+            "track_id": None,
+            "bbox": [],
+            "target_x": 320.0,
+            "target_y": 240.0,
+            "error_x": 0.0,
+            "error_y": 0.0,
+            "latency_ms": 0.0,
+            "cell_phone_detected": False,
+            "cell_phone_conf": None,
+            "cell_phone_tid": None
+        }
+
     # Initialize Real System Pipeline State Variables
     camera_state = "INITIALIZING"
     camera_device_label = "LOCAL DEVICE CAMERA"
-    yolo_state = "WAITING"
-    tracking_state = "WAITING"
-    target_cls = "NO TARGET DETECTED"
-    confidence = None
-    track_id = None
-    bbox = []
-    target_x, target_y = 320.0, 240.0
-    error_x, error_y = 0.0, 0.0
-    latency_ms = 0.0
-    cam_source = "LIVE LAPTOP CAMERA"
-    cell_phone_detected = False
-    cell_phone_conf = None
-    cell_phone_tid = None
-    frame_count = 0
-    fps = 0.0
+    browser_video_state = "INITIALIZING"
+    frame_transport_status = "NO FRAMES RECEIVED"
+    cam_source = "LIVE LOCAL CAMERA"
     frame_width = 0
     frame_height = 0
     track_state = "live"
@@ -186,89 +205,160 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
             camera_device_label = camera_data.get("device_label", "LOCAL DEVICE CAMERA")
             frame_width = camera_data.get("width", 640)
             frame_height = camera_data.get("height", 480)
-            frame_count = camera_data.get("frame_count", 0)
+            client_frame_count = camera_data.get("client_frame_count", 0)
             track_state = camera_data.get("track_state", "live")
             raw_frame_b64 = camera_data.get("frame", None)
+            frame_ts = camera_data.get("timestamp", 0)
+            video_ready_state = camera_data.get("video_ready_state", 0)
+            video_paused = camera_data.get("video_paused", False)
+            video_playing = camera_data.get("video_playing", False)
+            src_object_exists = camera_data.get("src_object_exists", False)
             cam_err = camera_data.get("error", None)
 
             if cam_err:
                 last_callback_error = str(cam_err)
 
-            if camera_status == "ONLINE" and raw_frame_b64:
+            if camera_status == "ONLINE":
                 camera_state = "ONLINE"
+                browser_video_state = "PLAYING" if video_playing else "PAUSED"
 
-                if isinstance(raw_frame_b64, str) and "," in raw_frame_b64:
-                    try:
-                        header, b64_data = raw_frame_b64.split(",", 1)
-                        img_bytes = base64.b64decode(b64_data)
-                        np_arr = np.frombuffer(img_bytes, np.uint8)
-                        img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+                # Check if a new frame payload was transported from browser
+                if raw_frame_b64 and isinstance(raw_frame_b64, str) and "," in raw_frame_b64:
+                    if frame_ts != st.session_state["last_processed_frame_ts"]:
+                        st.session_state["last_processed_frame_ts"] = frame_ts
+                        st.session_state["last_frame_recv_time"] = time.time()
 
-                        if img is not None:
-                            # 1. Run YOLO inference on real camera frame
-                            t0 = time.time()
-                            if detector and detector.model_loaded:
-                                yolo_state = "ACTIVE"
-                                raw_detections = detector.detect(img)
-                                latency_ms = (time.time() - t0) * 1000.0
-                            else:
-                                yolo_state = "ERROR" if detector else "WAITING"
-                                raw_detections = []
+                        try:
+                            header, b64_data = raw_frame_b64.split(",", 1)
+                            img_bytes = base64.b64decode(b64_data)
+                            np_arr = np.frombuffer(img_bytes, np.uint8)
+                            img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
 
-                            # 2. Update persistent tracker with real detections
-                            if len(raw_detections) == 0:
-                                tracking_state = "WAITING"
-                                target_cls = "NO TARGET DETECTED"
-                                confidence = None
-                                track_id = None
-                                bbox = []
-                                target_x, target_y = 320.0, 240.0
-                                error_x, error_y = 0.0, 0.0
-                            else:
-                                active_tracks = tracker.update(raw_detections)
-                                primary_target = tracker.get_primary_target()
+                            if img is not None:
+                                # INCREMENT ONLY WHEN AN ACTUAL FRAME CROSSED BROWSER -> PYTHON BOUNDARY!
+                                st.session_state["python_real_frames_count"] += 1
 
-                                if primary_target:
-                                    tracking_state = "ACTIVE"
-                                    target_x = float(primary_target.target_x)
-                                    target_y = float(primary_target.target_y)
-                                    error_x = float(primary_target.error_x)
-                                    error_y = float(primary_target.error_y)
-                                    track_id = primary_target.track_id
-                                    confidence = float(primary_target.confidence)
-                                    target_cls = primary_target.class_name
-                                    bbox = primary_target.bbox
+                                # 1. Run YOLO26n inference on the real decoded image matrix
+                                t0 = time.time()
+                                if detector and detector.model_loaded:
+                                    raw_detections = detector.detect(img)
+                                    latency_ms = (time.time() - t0) * 1000.0
+                                    st.session_state["yolo_inference_count"] += 1
+                                    st.session_state["last_yolo_inference_time"] = time.time()
+                                    st.session_state["yolo_engine_state"] = "ACTIVE"
                                 else:
-                                    tracking_state = "ACQUIRING"
-                                    first_det = raw_detections[0]
-                                    target_cls = first_det["class_name"]
-                                    confidence = float(first_det["confidence"])
-                                    bbox = first_det["bbox"]
-                                    target_x, target_y = float(first_det["center"][0]), float(first_det["center"][1])
-                                    error_x = target_x - 320.0
-                                    error_y = target_y - 240.0
-                                    track_id = None
+                                    st.session_state["yolo_engine_state"] = "ERROR"
+                                    raw_detections = []
 
-                                # Check if cell phone is detected
-                                for det in raw_detections:
-                                    cname = det["class_name"].lower()
-                                    if cname in ["cell phone", "mobile phone", "phone"]:
-                                        cell_phone_detected = True
-                                        cell_phone_conf = float(det["confidence"])
-                                        cell_phone_tid = track_id if track_id else 1
-                                        break
-                    except Exception as e:
-                        last_callback_error = f"{type(e).__name__}: {str(e)}"
+                                # 2. Update persistent tracker with real detections
+                                cell_phone_found = False
+                                cell_phone_confidence = None
+                                cell_phone_track_id = None
+
+                                if len(raw_detections) == 0:
+                                    st.session_state["tracking_engine_state"] = "WAITING"
+                                    target_cls = "NO TARGET DETECTED"
+                                    confidence = None
+                                    track_id = None
+                                    bbox = []
+                                    target_x, target_y = 320.0, 240.0
+                                    error_x, error_y = 0.0, 0.0
+                                else:
+                                    active_tracks = tracker.update(raw_detections)
+                                    primary_target = tracker.get_primary_target()
+
+                                    if primary_target:
+                                        st.session_state["tracking_engine_state"] = "ACTIVE"
+                                        target_x = float(primary_target.target_x)
+                                        target_y = float(primary_target.target_y)
+                                        error_x = float(primary_target.error_x)
+                                        error_y = float(primary_target.error_y)
+                                        track_id = primary_target.track_id
+                                        confidence = float(primary_target.confidence)
+                                        target_cls = primary_target.class_name
+                                        bbox = primary_target.bbox
+                                    else:
+                                        st.session_state["tracking_engine_state"] = "ACQUIRING"
+                                        first_det = raw_detections[0]
+                                        target_cls = first_det["class_name"]
+                                        confidence = float(first_det["confidence"])
+                                        bbox = first_det["bbox"]
+                                        target_x, target_y = float(first_det["center"][0]), float(first_det["center"][1])
+                                        error_x = target_x - 320.0
+                                        error_y = target_y - 240.0
+                                        track_id = None
+
+                                    # Check for cell phone object in real YOLO detections
+                                    for det in raw_detections:
+                                        cname = det["class_name"].lower()
+                                        if cname in ["cell phone", "mobile phone", "phone"]:
+                                            cell_phone_found = True
+                                            cell_phone_confidence = float(det["confidence"])
+                                            cell_phone_track_id = track_id if track_id else 1
+                                            break
+
+                                # Cache latest results in session state
+                                st.session_state["latest_detection_results"] = {
+                                    "target_cls": target_cls,
+                                    "confidence": confidence,
+                                    "track_id": track_id,
+                                    "bbox": bbox,
+                                    "target_x": target_x,
+                                    "target_y": target_y,
+                                    "error_x": error_x,
+                                    "error_y": error_y,
+                                    "latency_ms": latency_ms,
+                                    "cell_phone_detected": cell_phone_found,
+                                    "cell_phone_conf": cell_phone_confidence,
+                                    "cell_phone_tid": cell_phone_track_id
+                                }
+
+                        except Exception as e:
+                            last_callback_error = f"{type(e).__name__}: {str(e)}"
+
             elif "PERMISSION" in str(camera_status):
                 camera_state = "CAMERA PERMISSION DENIED"
+                browser_video_state = "STOPPED"
             elif "NOT SUPPORTED" in str(camera_status):
                 camera_state = "CAMERA API NOT SUPPORTED"
+                browser_video_state = "ERROR"
             elif "NO LOCAL" in str(camera_status) or "NO DEVICE" in str(camera_status):
                 camera_state = "NO LOCAL CAMERA FOUND"
+                browser_video_state = "NOT FOUND"
             else:
                 camera_state = str(camera_status)
+                browser_video_state = "INITIALIZING"
+
+        # Determine Frame Transport Status & Age
+        now = time.time()
+        last_recv_age = (now - st.session_state["last_frame_recv_time"]) if st.session_state["last_frame_recv_time"] > 0 else 999.0
+
+        if st.session_state["python_real_frames_count"] > 0 and last_recv_age < 3.0:
+            frame_transport_status = "RECEIVING"
+        elif st.session_state["python_real_frames_count"] > 0:
+            frame_transport_status = "PAUSED (AWAITING NEW FRAMES)"
+            st.session_state["yolo_engine_state"] = "WAITING FOR FRAMES"
         else:
-            camera_state = "INITIALIZING (AWAITING WEBCAM FRAMES)"
+            frame_transport_status = "NO FRAMES RECEIVED"
+            st.session_state["yolo_engine_state"] = "WAITING FOR FRAMES"
+
+        # Retrieve cached detection metrics from session state
+        res = st.session_state["latest_detection_results"]
+        target_cls = res["target_cls"]
+        confidence = res["confidence"]
+        track_id = res["track_id"]
+        bbox = res["bbox"]
+        target_x = res["target_x"]
+        target_y = res["target_y"]
+        error_x = res["error_x"]
+        error_y = res["error_y"]
+        latency_ms = res["latency_ms"]
+        cell_phone_detected = res["cell_phone_detected"]
+        cell_phone_conf = res["cell_phone_conf"]
+        cell_phone_tid = res["cell_phone_tid"]
+        yolo_state = st.session_state["yolo_engine_state"]
+        tracking_state = st.session_state["tracking_engine_state"]
+        frame_count = st.session_state["python_real_frames_count"]
 
     else:
         # Synthetic Target Mode (Explicit Simulation Fallback)
@@ -288,6 +378,8 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
 
         camera_state = "ONLINE (SIMULATED)"
         camera_device_label = "SYNTHETIC TARGET GENERATOR"
+        browser_video_state = "N/A"
+        frame_transport_status = "N/A (SYNTHETIC)"
         yolo_state = "ACTIVE"
         tracking_state = "ACTIVE"
         target_cls = "SYNTHETIC DRONE TARGET"
@@ -297,25 +389,27 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
         error_x = target_x - 320.0
         error_y = target_y - 240.0
         latency_ms = 12.5
+        last_recv_age = 0.0
 
     with col_det2:
         st.markdown("#### Detection Result Summary")
-        st.write(f"• **Model**: `{detector.model_name}`")
         st.write(f"• **Input Source**: `{cam_source}`")
         
-        # Real Camera Status Badge
-        if camera_state == "ONLINE":
-            st.markdown("• **Camera Status**: <span class='real-badge'>🟢 ONLINE (LOCAL DEVICE CAMERA)</span>", unsafe_allow_html=True)
-        elif camera_state in ["INITIALIZING", "CONNECTING", "WAITING"]:
-            st.markdown("• **Camera Status**: <span class='waiting-badge'>🟡 INITIALIZING (AWAITING WEBCAM FRAMES)</span>", unsafe_allow_html=True)
-        elif "WAITING FOR PERMISSION" in camera_state:
-            st.markdown("• **Camera Status**: <span class='waiting-badge'>🟡 WAITING FOR PERMISSION</span>", unsafe_allow_html=True)
-        elif "PERMISSION" in camera_state:
-            st.markdown("• **Camera Status**: <span class='offline-badge'>⛔ PERMISSION DENIED</span>", unsafe_allow_html=True)
-        elif "DEVICE" in camera_state or "NO LOCAL" in camera_state:
-            st.markdown("• **Camera Status**: <span class='offline-badge'>❌ NO DEVICE DETECTED</span>", unsafe_allow_html=True)
+        # Real Camera Status Badges
+        if camera_state in ["ONLINE", "ONLINE (SIMULATED)"]:
+            st.markdown("• **Camera Status**: <span class='real-badge'>🟢 ONLINE</span>", unsafe_allow_html=True)
         else:
             st.markdown(f"• **Camera Status**: <span class='offline-badge'>🔴 {camera_state}</span>", unsafe_allow_html=True)
+
+        if frame_transport_status == "RECEIVING":
+            st.markdown(f"• **Frame Transport**: <span class='real-badge'>🟢 RECEIVING ({frame_count} frames)</span>", unsafe_allow_html=True)
+        else:
+            st.markdown(f"• **Frame Transport**: <span class='waiting-badge'>🟡 {frame_transport_status}</span>", unsafe_allow_html=True)
+
+        if yolo_state == "ACTIVE":
+            st.markdown("• **YOLO26n Engine**: <span class='real-badge'>🟢 ACTIVE</span>", unsafe_allow_html=True)
+        else:
+            st.markdown(f"• **YOLO26n Engine**: <span class='waiting-badge'>🟡 {yolo_state}</span>", unsafe_allow_html=True)
 
         # Real YOLO Detection Values (No hardcoded values!)
         st.write(f"• **Detected Object**: **`{target_cls}`**")
@@ -364,12 +458,16 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
             st.write(f"• **Camera API**: `HTML5 navigator.mediaDevices.getUserMedia`")
             st.write(f"• **Active Camera Device**: `{camera_device_label}`")
             st.write(f"• **Camera Status**: `{camera_state}`")
-            st.write(f"• **Total Frames Received**: `{frame_count}`")
+            st.write(f"• **Browser Video Element**: `{browser_video_state}`")
+            st.write(f"• **Frame Transport Status**: `{frame_transport_status}`")
+            st.write(f"• **Real Frames Received (Python)**: `{st.session_state['python_real_frames_count']}`")
             st.write(f"• **Frame Resolution**: `{f'{frame_width}x{frame_height} px' if frame_width > 0 else 'N/A'}`")
-            st.write(f"• **Track State**: `{track_state}`")
+            st.write(f"• **Last Frame Age**: `{f'{last_recv_age:.1f} seconds' if last_recv_age < 900 else 'No frames received yet'}`")
+            st.write(f"• **Video Track State**: `{track_state}`")
             st.write(f"• **Last Component Error**: `{last_callback_error}`")
         with c_diag2:
             st.write(f"• **YOLO26n Engine State**: `{yolo_state}`")
+            st.write(f"• **YOLO Inferences Run**: `{st.session_state['yolo_inference_count']}`")
             st.write(f"• **Last Object Detected**: `{target_cls}`")
             st.write(f"• **Last Confidence Score**: `{f'{confidence * 100:.1f}%' if confidence is not None else '—'}`")
             st.write(f"• **Tracking Status**: `{tracking_state}`")
@@ -655,10 +753,11 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
     st.caption("🔒 *Note on Neutralization Scope: Authorized-response / operator-alert interface is outside the physical prototype scope.*")
 
     # ----------------------------------------------------
-    # AUTOMATIC DASHBOARD RERUN LOOP (Every 2 seconds)
+    # AUTOMATIC DASHBOARD RERUN LOOP (Non-blocking in Live Camera Mode)
     # ----------------------------------------------------
-    time.sleep(2.0)
-    if hasattr(st, 'rerun'):
-        st.rerun()
-    elif hasattr(st, 'experimental_rerun'):
-        st.experimental_rerun()
+    if target_mode != "Start Live Camera":
+        time.sleep(1.5)
+        if hasattr(st, 'rerun'):
+            st.rerun()
+        elif hasattr(st, 'experimental_rerun'):
+            st.experimental_rerun()
