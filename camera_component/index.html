@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>HAADS Device-Local Camera Component</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #0e1117;
+            color: #ffffff;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        }
+        .container {
+            position: relative;
+            width: 100%;
+            border-radius: 8px;
+            overflow: hidden;
+            background-color: #1e222d;
+            border: 1px solid #2d313e;
+        }
+        video {
+            width: 100%;
+            max-height: 480px;
+            display: block;
+            border-radius: 8px;
+            background-color: #000000;
+            object-fit: contain;
+        }
+        canvas {
+            display: none;
+        }
+        .status-banner {
+            padding: 10px 14px;
+            font-size: 0.85em;
+            font-weight: bold;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            background-color: #1a2332;
+            border-bottom: 1px solid #2d313e;
+        }
+        .badge {
+            padding: 4px 10px;
+            border-radius: 4px;
+            font-size: 0.85em;
+            font-weight: bold;
+        }
+        .badge-requesting { background-color: #7d6608; color: #f9e79f; }
+        .badge-online { background-color: #0e6251; color: #a3e4d7; }
+        .badge-error { background-color: #641e16; color: #fadbd8; }
+        .error-msg {
+            padding: 15px;
+            color: #fadbd8;
+            background-color: #78281f;
+            border-radius: 6px;
+            margin: 12px;
+            font-size: 0.9em;
+            line-height: 1.4;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="status-banner">
+            <span id="device-title">📷 LOCAL DEVICE CAMERA</span>
+            <span id="status-badge" class="badge badge-requesting">🟡 REQUESTING PERMISSION</span>
+        </div>
+        <div id="error-container" style="display: none;" class="error-msg"></div>
+        <video id="webcam-video" autoplay playsinline muted></video>
+        <canvas id="frame-canvas" width="640" height="480"></canvas>
+    </div>
+
+    <script>
+    (function() {
+        const video = document.getElementById('webcam-video');
+        const canvas = document.getElementById('frame-canvas');
+        const ctx = canvas.getContext('2d');
+        const statusBadge = document.getElementById('status-badge');
+        const errorContainer = document.getElementById('error-container');
+        const deviceTitle = document.getElementById('device-title');
+
+        let frameCount = 0;
+        let isStreaming = false;
+        let captureInterval = null;
+
+        function setStreamlitHeight() {
+            const height = document.body.scrollHeight || 420;
+            window.parent.postMessage({
+                isStreamlitMessage: true,
+                type: "streamlit:setFrameHeight",
+                height: height
+            }, "*");
+        }
+
+        function sendToStreamlit(data) {
+            window.parent.postMessage({
+                isStreamlitMessage: true,
+                type: "streamlit:setComponentValue",
+                value: data
+            }, "*");
+        }
+
+        function setError(type, msg) {
+            statusBadge.className = 'badge badge-error';
+            statusBadge.textContent = '🔴 ' + type;
+            errorContainer.style.display = 'block';
+            errorContainer.textContent = msg;
+            video.style.display = 'none';
+
+            sendToStreamlit({
+                status: type,
+                error: msg,
+                frame: null,
+                width: 0,
+                height: 0,
+                frame_count: 0,
+                api_supported: !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia),
+                video_playing: false,
+                track_state: 'ENDED',
+                device_label: 'LOCAL DEVICE CAMERA'
+            });
+            setStreamlitHeight();
+        }
+
+        async function initCamera() {
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                setError('CAMERA API NOT SUPPORTED', 'Browser does not support navigator.mediaDevices.getUserMedia API.');
+                return;
+            }
+
+            try {
+                // Request camera of whatever device the website is currently running on (Laptop / Phone / Tablet / Desktop)
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: true,
+                    audio: false
+                });
+
+                video.srcObject = stream;
+                await video.play();
+
+                const track = stream.getVideoTracks()[0];
+                if (!track || track.readyState !== 'live') {
+                    setError('NO LOCAL CAMERA FOUND', 'Camera stream opened but video track is not live.');
+                    return;
+                }
+
+                const devLabel = track.label || 'LOCAL DEVICE CAMERA';
+                deviceTitle.textContent = '📷 ' + devLabel.toUpperCase();
+
+                statusBadge.className = 'badge badge-online';
+                statusBadge.textContent = '🟢 CAMERA ONLINE';
+                errorContainer.style.display = 'none';
+                video.style.display = 'block';
+                isStreaming = true;
+                setStreamlitHeight();
+
+                // Frame capture loop at 5 FPS to feed Python YOLO26n & tracker
+                if (captureInterval) clearInterval(captureInterval);
+                captureInterval = setInterval(() => {
+                    if (video.readyState >= 2 && video.videoWidth > 0 && !video.paused) {
+                        frameCount++;
+                        canvas.width = 640;
+                        canvas.height = 480;
+                        ctx.drawImage(video, 0, 0, 640, 480);
+                        const dataUrl = canvas.toDataURL('image/jpeg', 0.65);
+
+                        sendToStreamlit({
+                            status: 'ONLINE',
+                            error: null,
+                            frame: dataUrl,
+                            width: video.videoWidth,
+                            height: video.videoHeight,
+                            frame_count: frameCount,
+                            api_supported: true,
+                            video_playing: !video.paused && !video.ended,
+                            track_state: track.readyState,
+                            device_label: devLabel
+                        });
+                    }
+                }, 200);
+
+            } catch (err) {
+                console.error('[DeviceCamera] getUserMedia error:', err);
+                if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+                    setError('CAMERA PERMISSION DENIED', 'Camera permission was denied by user or browser policy. Allow camera access in browser address bar.');
+                } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
+                    setError('NO LOCAL CAMERA FOUND', 'No physical or local camera device was found on this system.');
+                } else if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
+                    setError('CAMERA CURRENTLY IN USE', 'The camera device is already in use by another application.');
+                } else {
+                    setError('CAMERA INITIALIZATION FAILED', err.name + ': ' + err.message);
+                }
+            }
+        }
+
+        // Inform Streamlit framework component ready
+        window.parent.postMessage({
+            isStreamlitMessage: true,
+            type: "streamlit:componentReady",
+            apiVersion: 1
+        }, "*");
+        setStreamlitHeight();
+
+        // Auto-initialize camera stream
+        window.addEventListener('load', initCamera);
+        initCamera();
+    })();
+    </script>
+</body>
+</html>
