@@ -15,7 +15,7 @@ import threading
 import numpy as np
 
 try:
-    from streamlit_webrtc import webrtc_streamer, RTCConfiguration, VideoProcessorBase
+    from streamlit_webrtc import webrtc_streamer, RTCConfiguration, VideoProcessorBase, WebRtcMode
     import av
     WEBRTC_AVAILABLE = True
 except ImportError:
