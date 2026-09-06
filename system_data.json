@@ -1,18 +1,18 @@
 {
-  "timestamp": "2026-09-06 16:59:02",
+  "timestamp": "2026-09-06 17:07:35",
   "camera": {
     "status": "ONLINE",
     "fps": 0.0
   },
   "detection": {
     "model_name": "YOLO26n Edge AI \u2014 Object Detection & Tracking",
-    "object_count": 0
+    "object_count": 1
   },
   "tracking": {
     "target_x": 320.0,
     "target_y": 240.0,
-    "error_x": 50.0,
-    "error_y": -20.0
+    "error_x": 35.39999999999998,
+    "error_y": 130.10000000000002
   },
   "environment": {
     "temperature": -20.0,
@@ -41,32 +41,32 @@
       "pressure_damping_ratio": 0.592,
       "adaptive_stabilization_gain": 0.2,
       "estimated_motor_load_pct": 70.0,
-      "pan_correction_deg": 12.0,
-      "tilt_correction_deg": -4.0
+      "pan_correction_deg": 9.08,
+      "tilt_correction_deg": 26.02
     }
   },
   "performance": {
     "label": "SIMULATED PERFORMANCE ESTIMATE",
     "uncompensated": {
       "detection": 75.1,
-      "tracking": 61.1,
+      "tracking": 62.4,
       "stabilization": 32.8,
-      "overall": 53.3
+      "overall": 53.7
     },
     "compensated": {
       "detection": 90.5,
-      "tracking": 84.3,
+      "tracking": 84.9,
       "stabilization": 78.2,
-      "overall": 83.4
+      "overall": 83.6
     },
-    "overall_improvement_pct": 30.1
+    "overall_improvement_pct": 29.9
   },
   "health": {
     "overall_health_pct": 100,
     "subsystems": {
       "camera": "ONLINE",
       "ai_detector": "ACTIVE",
-      "tracking": "SEARCHING",
+      "tracking": "ACTIVE",
       "environment": "ACTIVE",
       "mpu6050": "ONLINE",
       "bme280": "ONLINE",
@@ -96,7 +96,7 @@
         "message": "High structural vibration detected. High-frequency filtering active."
       }
     ],
-    "timestamp": "2026-09-06 16:59:02"
+    "timestamp": "2026-09-06 17:07:35"
   },
   "hardware": {
     "state": "WOKWI_ONLINE",
@@ -118,7 +118,7 @@
       "vibration": 0.5,
       "pan": 95,
       "tilt": 85,
-      "timestamp": 1788694142.8822336
+      "timestamp": 1788694655.8065913
     },
     "pan_angle": 95,
     "tilt_angle": 85,
@@ -130,7 +130,7 @@
       "vibration": 0.5,
       "pan": 95,
       "tilt": 85,
-      "timestamp": 1788694142.8822336,
+      "timestamp": 1788694655.8065913,
       "status": "online"
     }
   }

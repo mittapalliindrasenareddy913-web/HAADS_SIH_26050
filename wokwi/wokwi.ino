@@ -1,20 +1,12 @@
 /*
-  HAADS SIH 26050 - Wokwi ESP32 Simulation Firmware with MQTT Heartbeat
+  HAADS SIH 26050 - Wokwi ESP32 Firmware with MQTT Telemetry & Serial Diagnostics
   Board: ESP32 DevKit V1
   Sensors: MPU6050 (IMU), BME280 (Temp/Press), 4 Potentiometers
   Actuators: Pan Servo (GPIO 26), Tilt Servo (GPIO 27)
-  Connectivity: WiFi (Wokwi-GUEST) + Public MQTT Broker (broker.hivemq.com)
-  Topic: isr/sih/26050/telemetry
-
-  Wokwi Circuit Connections:
-  - MPU6050: SDA -> GPIO 21, SCL -> GPIO 22
-  - BME280: SDA -> GPIO 21, SCL -> GPIO 22
-  - Temperature Pot: SIG -> GPIO 34
-  - Pressure Pot: SIG -> GPIO 35
-  - Wind Pot: SIG -> GPIO 32
-  - Vibration Pot: SIG -> GPIO 33
-  - Pan Servo: SIG -> GPIO 26
-  - Tilt Servo: SIG -> GPIO 27
+  WiFi: Wokwi-GUEST
+  MQTT Broker: broker.hivemq.com:1883
+  Telemetry Topic: isr/sih/26050/telemetry
+  Servo Command Topic: isr/sih/26050/servo
 */
 
 #include <Wire.h>
@@ -81,13 +73,19 @@ void callback(char* topic, byte* payload, unsigned int length) {
       tilt_angle = constrain(tilt_angle, 0, 180);
       panServo.write(pan_angle);
       tiltServo.write(tilt_angle);
+      Serial.print("[ESP32] SERVO_UPDATED -> Pan: ");
+      Serial.print(pan_angle);
+      Serial.print(" | Tilt: ");
+      Serial.println(tilt_angle);
     }
   }
 }
 
 void setupWiFi() {
   delay(10);
-  Serial.println("[ESP32] Connecting to WiFi (Wokwi-GUEST)...");
+  Serial.print("[ESP32] WIFI_CONNECTING to ");
+  Serial.print(ssid);
+  Serial.println("...");
   WiFi.mode(WIFI_STA);
   WiFi.begin(ssid, password);
 
@@ -99,11 +97,12 @@ void setupWiFi() {
   }
 
   if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("\n[ESP32] WiFi Connected!");
-    Serial.print("[ESP32] IP Address: ");
+    Serial.println("");
+    Serial.print("[ESP32] WIFI_CONNECTED | IP: ");
     Serial.println(WiFi.localIP());
   } else {
-    Serial.println("\n[ESP32] WiFi connection pending, proceeding with offline hardware loop.");
+    Serial.println("");
+    Serial.println("[ESP32] WIFI_CONNECTION_FAILED");
   }
 }
 
@@ -111,18 +110,22 @@ void reconnectMQTT() {
   if (WiFi.status() != WL_CONNECTED) return;
   
   if (!mqttClient.connected()) {
-    Serial.print("[ESP32] Attempting MQTT connection to ");
+    Serial.print("[ESP32] MQTT_CONNECTING to ");
     Serial.print(mqtt_server);
+    Serial.print(":");
+    Serial.print(mqtt_port);
     Serial.println("...");
 
     String clientId = "HAADS-ESP32-Wokwi-";
     clientId += String(random(0xffff), HEX);
 
     if (mqttClient.connect(clientId.c_str())) {
-      Serial.println("[ESP32] MQTT Connected!");
+      Serial.println("[ESP32] MQTT_CONNECTED");
       mqttClient.subscribe(mqtt_topic_servo);
+      Serial.print("[ESP32] MQTT_SUBSCRIBED to ");
+      Serial.println(mqtt_topic_servo);
     } else {
-      Serial.print("[ESP32] MQTT Connect failed, rc=");
+      Serial.print("[ESP32] MQTT_CONNECT_FAILED | Code: ");
       Serial.println(mqttClient.state());
     }
   }
@@ -132,7 +135,7 @@ void setup() {
   Serial.begin(115200);
   delay(500);
   Serial.println("==============================================");
-  Serial.println("HAADS WOKWI HARDWARE SIMULATION WITH MQTT");
+  Serial.println("HAADS SIH 26050 - WOKWI ESP32 MQTT FIRMWARE");
   Serial.println("==============================================");
 
   // Initialize Wire (I2C)
@@ -144,17 +147,17 @@ void setup() {
     mpu.setAccelerometerRange(MPU6050_RANGE_8_G);
     mpu.setGyroRange(MPU6050_RANGE_500_DEG);
     mpu.setFilterBandwidth(MPU6050_BAND_21_HZ);
-    Serial.println("[ESP32] MPU6050 initialized.");
+    Serial.println("[ESP32] MPU6050_INITIALIZED");
   } else {
-    Serial.println("[ESP32] MPU6050 I2C not found.");
+    Serial.println("[ESP32] MPU6050_NOT_FOUND");
   }
 
   // BME280 Init
   if (bme.begin(0x76) || bme.begin(0x77)) {
     bmeOK = true;
-    Serial.println("[ESP32] BME280 initialized.");
+    Serial.println("[ESP32] BME280_INITIALIZED");
   } else {
-    Serial.println("[ESP32] BME280 I2C not found.");
+    Serial.println("[ESP32] BME280_NOT_FOUND");
   }
 
   // Servo Setup
@@ -202,6 +205,13 @@ void loop() {
 
   // Vibration magnitude: 0.0 .. 1.0
   sim_vibration = raw_vib / 4095.0;
+  if (sim_vibration < 0.33) {
+    sim_vibration_str = "LOW";
+  } else if (sim_vibration < 0.66) {
+    sim_vibration_str = "MEDIUM";
+  } else {
+    sim_vibration_str = "HIGH";
+  }
 
   // Read Serial Commands (Fallback Pan/Tilt control)
   if (Serial.available()) {
@@ -230,17 +240,26 @@ void loop() {
     jsonPayload += "\"temperature\":" + String(sim_temperature, 1) + ",";
     jsonPayload += "\"pressure\":" + String(sim_pressure, 1) + ",";
     jsonPayload += "\"wind\":" + String(sim_wind_speed, 1) + ",";
-    jsonPayload += "\"vibration\":" + String(sim_vibration, 2) + ",";
+    jsonPayload += "\"vibration\":\"" + sim_vibration_str + "\",";
+    jsonPayload += "\"vibration_val\":" + String(sim_vibration, 2) + ",";
     jsonPayload += "\"pan\":" + String(pan_angle) + ",";
     jsonPayload += "\"tilt\":" + String(tilt_angle) + ",";
     jsonPayload += "\"timestamp\":" + String(millis());
     jsonPayload += "}";
 
     if (mqttClient.connected()) {
-      mqttClient.publish(mqtt_topic_telemetry, jsonPayload.c_str());
-      Serial.println("[ESP32 -> MQTT] Telemetry Published: " + jsonPayload);
+      bool published = mqttClient.publish(mqtt_topic_telemetry, jsonPayload.c_str());
+      if (published) {
+        Serial.print("[ESP32] MQTT_PUBLISH_SUCCESS -> ");
+        Serial.println(mqtt_topic_telemetry);
+        Serial.print("[ESP32] TELEMETRY_PUBLISHED: ");
+        Serial.println(jsonPayload);
+      } else {
+        Serial.println("[ESP32] MQTT_PUBLISH_FAILED");
+      }
     } else {
-      Serial.println("[ESP32 Serial Telemetry] " + jsonPayload);
+      Serial.print("[ESP32 Serial Telemetry] ");
+      Serial.println(jsonPayload);
     }
   }
 
