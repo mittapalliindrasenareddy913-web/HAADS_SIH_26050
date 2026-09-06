@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-09-06 17:30:03",
+  "timestamp": "2026-09-06 17:41:51",
   "camera": {
     "status": "ONLINE",
     "fps": 0.0
@@ -11,8 +11,8 @@
   "tracking": {
     "target_x": 320.0,
     "target_y": 240.0,
-    "error_x": -2.8000000000000114,
-    "error_y": 114.89999999999998
+    "error_x": 63.30000000000001,
+    "error_y": 124.0
   },
   "environment": {
     "temperature": -20.0,
@@ -41,31 +41,31 @@
       "pressure_damping_ratio": 0.592,
       "adaptive_stabilization_gain": 0.2,
       "estimated_motor_load_pct": 70.0,
-      "pan_correction_deg": 1.44,
-      "tilt_correction_deg": 22.98
+      "pan_correction_deg": 14.66,
+      "tilt_correction_deg": 24.8
     }
   },
   "performance": {
     "label": "SIMULATED PERFORMANCE ESTIMATE",
     "uncompensated": {
       "detection": 75.1,
-      "tracking": 65.2,
+      "tracking": 59.9,
       "stabilization": 32.8,
-      "overall": 54.7
+      "overall": 52.9
     },
     "compensated": {
       "detection": 90.5,
-      "tracking": 86.4,
+      "tracking": 83.7,
       "stabilization": 78.2,
-      "overall": 84.1
+      "overall": 83.2
     },
-    "overall_improvement_pct": 29.4
+    "overall_improvement_pct": 30.3
   },
   "health": {
     "overall_health_pct": 100,
     "subsystems": {
       "camera": "ONLINE",
-      "ai_detector": "ACTIVE",
+      "ai_detector": "WAITING",
       "tracking": "ACTIVE",
       "environment": "ACTIVE",
       "mpu6050": "ONLINE",
@@ -96,7 +96,7 @@
         "message": "High structural vibration detected. High-frequency filtering active."
       }
     ],
-    "timestamp": "2026-09-06 17:30:03"
+    "timestamp": "2026-09-06 17:41:51"
   },
   "hardware": {
     "state": "WOKWI_ONLINE",
@@ -118,7 +118,7 @@
       "vibration": 0.5,
       "pan": 95,
       "tilt": 85,
-      "timestamp": 1788696003.692006
+      "timestamp": 1788696711.480242
     },
     "pan_angle": 95,
     "tilt_angle": 85,
@@ -130,7 +130,7 @@
       "vibration": 0.5,
       "pan": 95,
       "tilt": 85,
-      "timestamp": 1788696003.692006,
+      "timestamp": 1788696711.480242,
       "status": "online"
     }
   }

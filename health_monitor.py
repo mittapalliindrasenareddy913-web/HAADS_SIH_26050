@@ -22,7 +22,7 @@ class HealthMonitor:
         }
         self.alerts = []
 
-    def update_health(self, camera_status, detector_status, tracking_count,
+    def update_health(self, camera_status, detector_status, tracking_status,
                       env_state, hw_state, perf_state):
         """
         Updates subsystem statuses and evaluates rule-based alerts.
@@ -32,30 +32,50 @@ class HealthMonitor:
 
         # 1. Camera Subsystem Status
         cam_str = str(camera_status).upper()
-        if "ERROR" in cam_str:
+        if "ONLINE" in cam_str:
+            self.subsystems["camera"] = "ONLINE"
+        elif "WAITING" in cam_str:
+            self.subsystems["camera"] = "WAITING"
+        elif "PERMISSION" in cam_str:
+            self.subsystems["camera"] = "PERMISSION DENIED"
+        elif "ERROR" in cam_str:
             self.subsystems["camera"] = "ERROR"
             self.alerts.append({
                 "level": "WARNING",
                 "code": "CAMERA_UNAVAILABLE",
-                "message": "Laptop webcam feed unavailable. Running software fallback."
+                "message": "Webcam stream unavailable or disconnected."
             })
         else:
-            self.subsystems["camera"] = "ONLINE"
+            self.subsystems["camera"] = "OFFLINE"
 
         # 2. AI Detector Status
-        self.subsystems["ai_detector"] = "ACTIVE" if detector_status else "ERROR"
-        if self.subsystems["ai_detector"] == "ERROR":
+        det_str = str(detector_status).upper()
+        if "ACTIVE" in det_str:
+            self.subsystems["ai_detector"] = "ACTIVE"
+        elif "READY" in det_str:
+            self.subsystems["ai_detector"] = "READY"
+        elif "ERROR" in det_str:
+            self.subsystems["ai_detector"] = "ERROR"
             self.alerts.append({
                 "level": "ERROR",
                 "code": "AI_MODEL_ERROR",
                 "message": "YOLO26n Edge AI detector engine initialization error."
             })
+        else:
+            self.subsystems["ai_detector"] = "WAITING"
 
         # 3. Tracking Status
-        if tracking_count > 0:
-            self.subsystems["tracking"] = "ACTIVE"
+        if isinstance(tracking_status, str):
+            track_str = tracking_status.upper()
         else:
-            self.subsystems["tracking"] = "SEARCHING"
+            track_str = "ACTIVE" if tracking_status > 0 else "WAITING"
+
+        if "ACTIVE" in track_str:
+            self.subsystems["tracking"] = "ACTIVE"
+        elif "ACQUIRING" in track_str:
+            self.subsystems["tracking"] = "ACQUIRING"
+        else:
+            self.subsystems["tracking"] = "WAITING"
 
         # 4. Hardware & Communication Status (Strictly derived from real Wokwi heartbeat!)
         is_wokwi_online = hw_state.get("is_connected", False)

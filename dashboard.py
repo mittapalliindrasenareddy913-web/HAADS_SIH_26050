@@ -2,7 +2,7 @@
 HAADS SIH 26050 - Streamlit Engineering Dashboard Module
 Renders the 11-section engineering dashboard for High Altitude Anti-Drone System prototype.
 SIH Problem Statement 26050 Alignment: High Altitude Performance Optimization and Robust Design.
-Includes automatic 2-second dashboard refresh, WebRTC live camera streaming, and MQTT diagnostics.
+Includes WebRTC live browser camera processing, real mobile phone detection alerts, and Wokwi MQTT telemetry.
 """
 
 import streamlit as st
@@ -11,6 +11,7 @@ import json
 import time
 import os
 import math
+import threading
 import numpy as np
 
 try:
@@ -27,19 +28,202 @@ from performance import PerformanceEngine
 from health_monitor import HealthMonitor
 from hardware_interface import HardwareInterface
 from data_manager import SystemDataManager
+from detector import YOLO26nDetector
+from tracker import PersistentTracker
+
+
+# ----------------------------------------------------
+# THREAD-SAFE GLOBAL DETECTOR SINGLETON
+# ----------------------------------------------------
+_GLOBAL_DETECTOR = None
+_GLOBAL_DETECTOR_LOCK = threading.Lock()
+
+def get_shared_detector():
+    global _GLOBAL_DETECTOR
+    with _GLOBAL_DETECTOR_LOCK:
+        if _GLOBAL_DETECTOR is None:
+            _GLOBAL_DETECTOR = YOLO26nDetector()
+        return _GLOBAL_DETECTOR
+
+
+# ----------------------------------------------------
+# WEBRTC VIDEO PROCESSOR FOR REAL FRAME DETECTION
+# ----------------------------------------------------
+class YOLOVideoProcessor(VideoProcessorBase):
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.detector = get_shared_detector()
+        self.tracker = PersistentTracker()
+
+        self.frame_count = 0
+        self.last_frame_time = 0.0
+        self.fps = 0.0
+        
+        # Real Subsystem States
+        self.camera_state = "ONLINE"
+        self.yolo_state = "ACTIVE" if self.detector.model_loaded else "ERROR"
+        self.tracking_state = "WAITING"
+        
+        # Detection Metadata
+        self.detected_class = "NO TARGET DETECTED"
+        self.confidence = None
+        self.track_id = None
+        self.bbox = []
+        self.target_x = 320.0
+        self.target_y = 240.0
+        self.error_x = 0.0
+        self.error_y = 0.0
+        self.latency_ms = 0.0
+        
+        # Real-time Phone Detection Alert Flags
+        self.cell_phone_detected = False
+        self.cell_phone_confidence = None
+        self.cell_phone_track_id = None
+        self.last_phone_detection_time = 0.0
+        self.active_tracks = []
+
+    def recv(self, frame: av.VideoFrame) -> av.VideoFrame:
+        img = frame.to_ndarray(format="bgr24")
+        now = time.time()
+
+        with self.lock:
+            if self.last_frame_time > 0:
+                dt = now - self.last_frame_time
+                if dt > 0:
+                    self.fps = 0.9 * self.fps + 0.1 * (1.0 / dt) if self.fps > 0 else (1.0 / dt)
+            self.last_frame_time = now
+            self.frame_count += 1
+            self.camera_state = "ONLINE"
+
+            # 1. Run YOLO inference on real camera frame
+            t0 = time.time()
+            if self.detector.model_loaded:
+                self.yolo_state = "ACTIVE"
+                raw_detections = self.detector.detect(img)
+            else:
+                self.yolo_state = "ERROR"
+                raw_detections = []
+            self.latency_ms = (time.time() - t0) * 1000.0
+
+            # 2. Update persistent tracker with real detections
+            if len(raw_detections) == 0:
+                self.tracking_state = "WAITING"
+                self.detected_class = "NO TARGET DETECTED"
+                self.confidence = None
+                self.track_id = None
+                self.bbox = []
+                self.target_x = 320.0
+                self.target_y = 240.0
+                self.error_x = 0.0
+                self.error_y = 0.0
+                self.active_tracks = []
+
+                if now - self.last_phone_detection_time > 2.0:
+                    self.cell_phone_detected = False
+                    self.cell_phone_confidence = None
+                    self.cell_phone_track_id = None
+            else:
+                active_tracks = self.tracker.update(raw_detections)
+                self.active_tracks = active_tracks
+                primary_target = self.tracker.get_primary_target()
+
+                if primary_target:
+                    self.tracking_state = "ACTIVE"
+                    self.target_x = float(primary_target.target_x)
+                    self.target_y = float(primary_target.target_y)
+                    self.error_x = float(primary_target.error_x)
+                    self.error_y = float(primary_target.error_y)
+                    self.track_id = primary_target.track_id
+                    self.confidence = float(primary_target.confidence)
+                    self.detected_class = primary_target.class_name
+                    self.bbox = primary_target.bbox
+                else:
+                    self.tracking_state = "ACQUIRING"
+                    first_det = raw_detections[0]
+                    self.detected_class = first_det["class_name"]
+                    self.confidence = float(first_det["confidence"])
+                    self.bbox = first_det["bbox"]
+                    self.target_x, self.target_y = float(first_det["center"][0]), float(first_det["center"][1])
+                    self.error_x = self.target_x - 320.0
+                    self.error_y = self.target_y - 240.0
+                    self.track_id = None
+
+                # Check if cell phone is detected
+                found_phone = False
+                for det in raw_detections:
+                    cname = det["class_name"].lower()
+                    if cname in ["cell phone", "mobile phone", "phone"]:
+                        found_phone = True
+                        self.cell_phone_detected = True
+                        self.cell_phone_confidence = float(det["confidence"])
+                        self.cell_phone_track_id = self.track_id if self.track_id else 1
+                        self.last_phone_detection_time = now
+                        break
+
+                if not found_phone and (now - self.last_phone_detection_time > 2.0):
+                    self.cell_phone_detected = False
+                    self.cell_phone_confidence = None
+                    self.cell_phone_track_id = None
+
+            # 3. Draw tracking bounding boxes & reticle over real frame
+            cv2.line(img, (320, 220), (320, 260), (0, 255, 0), 1)
+            cv2.line(img, (300, 240), (340, 240), (0, 255, 0), 1)
+            cv2.putText(img, "CENTER (320,240)", (325, 235), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0), 1)
+
+            for track in self.active_tracks:
+                bx1, by1, bx2, by2 = [int(v) for v in track.bbox]
+                cv2.rectangle(img, (bx1, by1), (bx2, by2), (255, 105, 180), 2)
+                label_text = f"ID-{track.track_id} {track.class_name} ({track.confidence:.2f})"
+                cv2.putText(img, label_text, (bx1, max(15, by1 - 8)),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 105, 180), 2)
+                if len(track.trajectory) > 1:
+                    pts = np.array(track.trajectory, dtype=np.int32).reshape((-1, 1, 2))
+                    cv2.polylines(img, [pts], isClosed=False, color=(0, 255, 255), thickness=2)
+                cv2.line(img, (320, 240), (int(track.target_x), int(track.target_y)), (0, 165, 255), 2)
+
+        return av.VideoFrame.from_ndarray(img, format="bgr24")
+
+    def get_state(self):
+        with self.lock:
+            now = time.time()
+            frame_age = (now - self.last_frame_time) if self.last_frame_time > 0 else 999.0
+            is_online = (self.last_frame_time > 0 and frame_age < 3.0)
+            
+            cam_state = "ONLINE" if is_online else ("WAITING" if self.last_frame_time == 0 else "OFFLINE")
+            
+            return {
+                "camera_state": cam_state,
+                "yolo_state": self.yolo_state if is_online else "WAITING",
+                "tracking_state": self.tracking_state if is_online else "WAITING",
+                "frame_count": self.frame_count,
+                "fps": round(self.fps, 1),
+                "last_frame_age": round(frame_age, 1),
+                "last_frame_time": self.last_frame_time,
+                "detected_class": self.detected_class if is_online else "NO TARGET DETECTED",
+                "confidence": self.confidence if is_online else None,
+                "track_id": self.track_id if is_online else None,
+                "bbox": self.bbox if is_online else [],
+                "target_x": self.target_x if is_online else 320.0,
+                "target_y": self.target_y if is_online else 240.0,
+                "error_x": self.error_x if is_online else 0.0,
+                "error_y": self.error_y if is_online else 0.0,
+                "latency_ms": round(self.latency_ms, 1),
+                "cell_phone_detected": (self.cell_phone_detected and (now - self.last_phone_detection_time <= 2.0)),
+                "cell_phone_confidence": self.cell_phone_confidence,
+                "cell_phone_track_id": self.cell_phone_track_id,
+                "active_tracks_count": len(self.active_tracks) if is_online else 0
+            }
 
 
 def create_synthetic_drone_frame(target_x, target_y):
     """Generates a synthetic high-contrast quadcopter drone target frame."""
     frame = np.zeros((480, 640, 3), dtype=np.uint8)
-    # Background grid
     for y in range(0, 480, 40):
         cv2.line(frame, (0, y), (640, y), (25, 30, 35), 1)
     for x in range(0, 640, 40):
         cv2.line(frame, (x, 0), (x, 480), (25, 30, 35), 1)
 
     tx, ty = int(target_x), int(target_y)
-    # Draw Quadcopter Drone Target
     cv2.circle(frame, (tx, ty), 12, (0, 200, 255), -1)
     cv2.line(frame, (tx - 35, ty - 25), (tx + 35, ty + 25), (180, 180, 180), 3)
     cv2.line(frame, (tx - 35, ty + 25), (tx + 35, ty - 25), (180, 180, 180), 3)
@@ -68,6 +252,7 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
         .real-badge { background-color: #0e6251; color: #a3e4d7; padding: 4px 8px; border-radius: 4px; font-weight: bold; font-size: 0.85em; }
         .sim-badge { background-color: #7d6608; color: #f9e79f; padding: 4px 8px; border-radius: 4px; font-weight: bold; font-size: 0.85em; }
         .offline-badge { background-color: #641e16; color: #fadbd8; padding: 4px 8px; border-radius: 4px; font-weight: bold; font-size: 0.85em; }
+        .waiting-badge { background-color: #7d6608; color: #f9e79f; padding: 4px 8px; border-radius: 4px; font-weight: bold; font-size: 0.85em; }
         .alert-box { padding: 10px; border-radius: 6px; margin-bottom: 8px; }
         .alert-WARNING { background-color: #78281f; color: #fadbd8; border-left: 5px solid #e74c3c; }
         .alert-CRITICAL { background-color: #641e16; color: #f5b7b1; border-left: 5px solid #922b21; font-weight: bold; }
@@ -81,7 +266,7 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
     st.info("💡 **Objective**: Environmental compensation and robust precision tracking for reliable high-altitude operation.")
     st.markdown("---")
 
-    # Read current Wokwi state (driven strictly by real MQTT heartbeat!)
+    # Read current Wokwi state (strictly driven by real MQTT heartbeat)
     hw_state = hw_interface.get_state()
     is_wokwi_online = hw_state.get("is_connected", False)
 
@@ -90,7 +275,6 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
     # ----------------------------------------------------
     st.sidebar.header("🕹️ System Controls")
     
-    # Environment Scenario Presets
     st.sidebar.subheader("High-Altitude Scenarios")
     selected_scenario = st.sidebar.selectbox(
         "Select Environmental Preset:",
@@ -135,139 +319,202 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
         st.sidebar.success("Sent simulated MQTT Heartbeat to Python!")
 
     # ----------------------------------------------------
-    # TARGET INPUT SELECTION & FRAME PREPARATION
+    # TARGET INPUT SELECTION
     # ----------------------------------------------------
     target_mode = st.radio(
         "Select Target Input Source:",
-        ["Synthetic Drone Target", "Start Live Camera"],
+        ["Start Live Camera", "Synthetic Drone Target (Simulation Only)"],
         index=0,
         horizontal=True
     )
 
-    frame = None
-    cam_source = "SYNTHETIC TARGET"
-    cam_status_str = "STANDBY"
-    is_live_camera = False
+    demo_proxy_mode = st.checkbox("📱 Enable Demo Proxy Target Mode (Use Cell Phone / Object as Drone-Proxy Test)", value=True)
 
-    demo_proxy_mode = st.checkbox("📱 Enable Demo Proxy Target Mode (Use Cell Phone / Object as Drone-Proxy Test)", value=False)
+    # Initialize Real System Pipeline State Variables
+    camera_state = "WAITING"
+    yolo_state = "WAITING"
+    tracking_state = "WAITING"
+    target_cls = "NO TARGET DETECTED"
+    confidence = None
+    track_id = None
+    bbox = []
+    target_x, target_y = 320.0, 240.0
+    error_x, error_y = 0.0, 0.0
+    latency_ms = 0.0
+    cam_source = "LIVE LAPTOP CAMERA"
+    cell_phone_detected = False
+    cell_phone_conf = None
+    cell_phone_tid = None
+    webrtc_link_status = "DISCONNECTED"
+    browser_cam_status = "UNKNOWN"
+    frame_count = 0
+    fps = 0.0
+    last_frame_age = 999.0
+    webrtc_error_str = "None"
+    webrtc_ctx = None
 
-    if target_mode == "Synthetic Drone Target":
-        st.markdown("<span class='sim-badge'>SYNTHETIC TARGET — SIMULATION ONLY</span>", unsafe_allow_html=True)
+    # ----------------------------------------------------
+    # 2. TARGET DETECTION & IDENTIFICATION
+    # ----------------------------------------------------
+    st.subheader("2. Target Detection & Identification")
+    col_det1, col_det2 = st.columns([6, 4])
+
+    if target_mode == "Start Live Camera":
+        cam_source = "LIVE LAPTOP CAMERA"
+        
+        with col_det1:
+            st.markdown("<span class='real-badge'>LIVE WEBCAM STREAM — SCANNING ACTIVE</span>", unsafe_allow_html=True)
+            st.caption("📷 Browser WebRTC Live Video Streamer (Allow camera permission in browser)")
+
+            if WEBRTC_AVAILABLE:
+                try:
+                    webrtc_ctx = webrtc_streamer(
+                        key="haads-live-camera",
+                        video_processor_factory=YOLOVideoProcessor,
+                        rtc_configuration=RTCConfiguration({"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}),
+                        media_stream_constraints={"video": True, "audio": False}
+                    )
+                except Exception as e:
+                    webrtc_error_str = str(e)
+                    st.error(f"WebRTC Initialization Error: {webrtc_error_str}")
+
+                if webrtc_ctx and webrtc_ctx.video_processor:
+                    webrtc_link_status = "CONNECTED"
+                    browser_cam_status = "AVAILABLE / PERMISSION GRANTED"
+                    
+                    proc_state = webrtc_ctx.video_processor.get_state()
+                    camera_state = proc_state["camera_state"]
+                    yolo_state = proc_state["yolo_state"]
+                    tracking_state = proc_state["tracking_state"]
+                    target_cls = proc_state["detected_class"]
+                    confidence = proc_state["confidence"]
+                    track_id = proc_state["track_id"]
+                    bbox = proc_state["bbox"]
+                    target_x, target_y = proc_state["target_x"], proc_state["target_y"]
+                    error_x, error_y = proc_state["error_x"], proc_state["error_y"]
+                    latency_ms = proc_state["latency_ms"]
+                    cell_phone_detected = proc_state["cell_phone_detected"]
+                    cell_phone_conf = proc_state["cell_phone_confidence"]
+                    cell_phone_tid = proc_state["cell_phone_track_id"]
+                    frame_count = proc_state["frame_count"]
+                    fps = proc_state["fps"]
+                    last_frame_age = proc_state["last_frame_age"]
+                else:
+                    webrtc_link_status = "CONNECTING / AWAITING START"
+                    browser_cam_status = "AWAITING USER PERMISSION"
+                    camera_state = "WAITING"
+                    yolo_state = "WAITING"
+                    tracking_state = "WAITING"
+                    target_cls = "NO TARGET DETECTED"
+                    confidence = None
+                    track_id = None
+                    st.info("ℹ️ Click **START** in the WebRTC camera widget above and allow browser camera permission.")
+
+            else:
+                st.error("streamlit-webrtc package is unavailable.")
+                camera_state = "ERROR"
+
+    else:
+        # Synthetic Target Mode (Explicit Simulation Fallback)
+        cam_source = "SYNTHETIC TARGET"
+        st.markdown("<span class='sim-badge'>SYNTHETIC DRONE TARGET — SIMULATION ONLY</span>", unsafe_allow_html=True)
         c_sim1, c_sim2 = st.columns(2)
         with c_sim1:
             sim_target_x = st.slider("Simulated Target X Position", 50, 590, 420, key="sim_tx")
         with c_sim2:
             sim_target_y = st.slider("Simulated Target Y Position", 50, 430, 180, key="sim_ty")
         
-        frame = create_synthetic_drone_frame(sim_target_x, sim_target_y)
-        cam_source = "SYNTHETIC TARGET"
-        cam_status_str = "SYNTHETIC DRONE TARGET — SIMULATION ONLY"
-
-    elif target_mode == "Start Live Camera":
-        st.markdown("<span class='real-badge'>LIVE CAMERA STREAM — REAL-TIME SCANNING</span>", unsafe_allow_html=True)
-        is_live_camera = True
+        synth_frame = create_synthetic_drone_frame(sim_target_x, sim_target_y)
+        rgb_synth = cv2.cvtColor(synth_frame, cv2.COLOR_BGR2RGB)
         
-        # Try local camera manager frame first
-        cam_success, live_frame = camera_mgr.get_frame()
-        if cam_success and live_frame is not None and camera_mgr.status == "ONLINE":
-            frame = live_frame
-            cam_source = "LIVE LAPTOP WEBCAM"
-            cam_status_str = f"ONLINE (LIVE WEBCAM - {camera_mgr.fps:.1f} FPS)"
+        with col_det1:
+            st.image(rgb_synth, channels="RGB", use_container_width=True)
+
+        camera_state = "ONLINE (SIMULATED)"
+        yolo_state = "ACTIVE"
+        tracking_state = "ACTIVE"
+        target_cls = "SYNTHETIC DRONE TARGET"
+        confidence = 0.94
+        track_id = 1
+        target_x, target_y = float(sim_target_x), float(sim_target_y)
+        error_x = target_x - 320.0
+        error_y = target_y - 240.0
+        latency_ms = 12.5
+
+    with col_det2:
+        st.markdown("#### Detection Result Summary")
+        st.write(f"• **Model**: `{detector.model_name}`")
+        st.write(f"• **Input Source**: `{cam_source}`")
+        
+        # Real Camera Status Badge
+        if camera_state == "ONLINE":
+            st.markdown("• **Camera Status**: <span class='real-badge'>🟢 ONLINE (LIVE WEBCAM)</span>", unsafe_allow_html=True)
+        elif camera_state == "WAITING":
+            st.markdown("• **Camera Status**: <span class='waiting-badge'>🟡 WAITING (AWAITING FRAMES)</span>", unsafe_allow_html=True)
         else:
-            # Render WebRTC live camera streamer for Streamlit Cloud
-            if WEBRTC_AVAILABLE:
-                st.caption("🎥 WebRTC Browser Live Camera Streamer (Streamlit Cloud Active)")
-                webrtc_ctx = webrtc_streamer(
-                    key="haads-live-webcam-cloud",
-                    rtc_configuration=RTCConfiguration({"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}),
-                    media_stream_constraints={"video": True, "audio": False}
-                )
-                if webrtc_ctx.video_processor:
-                    cam_source = "LIVE WEBRTC CAMERA"
-                    cam_status_str = "ONLINE (LIVE WEBRTC STREAM)"
+            st.markdown("• **Camera Status**: <span class='offline-badge'>🔴 OFFLINE / DISCONNECTED</span>", unsafe_allow_html=True)
 
-            cam_img_buffer = st.camera_input("📷 Capture Frame / Web Snapshot", key="camera_scan_input")
-            if cam_img_buffer is not None:
-                bytes_data = cam_img_buffer.getvalue()
-                file_bytes = np.frombuffer(bytes_data, np.uint8)
-                decoded_frame = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
-                if decoded_frame is not None:
-                    frame = cv2.resize(decoded_frame, (640, 480))
-                    cam_source = "LIVE BROWSER CAMERA"
-                    cam_status_str = "ONLINE (BROWSER CAMERA SNAPSHOT)"
-            else:
-                if frame is None:
-                    st.info("SYSTEM READY — Allow camera access or take photo above.")
-                    frame = create_synthetic_drone_frame(320, 240)
-                    cam_source = "CAMERA STANDBY"
-                    cam_status_str = "SYSTEM READY — AWAITING CAPTURE"
+        # Real YOLO Detection Values (No hardcoded values!)
+        st.write(f"• **Detected Object**: **`{target_cls}`**")
+        st.write(f"• **Confidence Score**: **`{f'{confidence * 100:.1f}%' if confidence is not None else '—'}`**")
+        st.write(f"• **Track Object ID**: **`{track_id if track_id is not None else '—'}`**")
+        st.write(f"• **Inference Latency**: `{f'{latency_ms:.1f} ms' if latency_ms > 0 else '—'}`")
+        
+        st.write("")
 
-    if frame is None:
-        frame = create_synthetic_drone_frame(420, 180)
+        # ----------------------------------------------------
+        # 🚨 REAL-TIME MOBILE PHONE DETECTION ALERT
+        # ----------------------------------------------------
+        is_phone_target = (cell_phone_detected or "cell phone" in target_cls.lower() or "phone" in target_cls.lower())
+        
+        if is_phone_target and target_mode == "Start Live Camera":
+            display_conf_str = f"{cell_phone_conf * 100:.1f}%" if cell_phone_conf else (f"{confidence * 100:.1f}%" if confidence else "N/A")
+            display_tid_str = str(cell_phone_tid if cell_phone_tid else (track_id if track_id else 1))
+
+            st.markdown(f"""
+                <div style="background-color: #78281f; padding: 14px; border-radius: 8px; border-left: 6px solid #e74c3c; margin-bottom: 12px;">
+                    <h3 style="color: #fadbd8; margin: 0; font-size: 1.2em;">🚨 TARGET ALERT</h3>
+                    <hr style="border: 0.5px solid #e74c3c; margin: 6px 0;">
+                    <p style="color: #ffffff; font-weight: bold; margin: 2px 0;">Mobile Phone Detected</p>
+                    <p style="color: #fadbd8; margin: 2px 0;">• Object: <b>CELL PHONE</b></p>
+                    <p style="color: #fadbd8; margin: 2px 0;">• Confidence: <b>{display_conf_str}</b></p>
+                    <p style="color: #fadbd8; margin: 2px 0;">• Track ID: <b>{display_tid_str}</b></p>
+                    <p style="color: #fadbd8; margin: 2px 0;">• Source: <b>LIVE LAPTOP CAMERA</b></p>
+                </div>
+            """, unsafe_allow_html=True)
+
+        if demo_proxy_mode and is_phone_target and target_mode == "Start Live Camera":
+            st.markdown("""
+                <div style="background-color: #1b4f72; padding: 12px; border-radius: 6px; border-left: 4px solid #3498db; margin-bottom: 12px;">
+                    <p style="color: #d4efdf; font-weight: bold; margin: 0;">📱 Mobile Phone → Drone Image Proxy Demonstration</p>
+                    <p style="color: #ffffff; margin: 3px 0;">• Physical Object: <b>CELL PHONE</b></p>
+                    <p style="color: #ffffff; margin: 2px 0;">• Displayed Target: <b>DRONE IMAGE</b></p>
+                    <p style="color: #ffffff; margin: 2px 0;">• Target Role: <b>DRONE-PROXY TEST OBJECT</b></p>
+                    <p style="color: #ffffff; margin: 2px 0;">• Status: <b>SIMULATION / DEMONSTRATION ONLY</b></p>
+                </div>
+            """, unsafe_allow_html=True)
+
+    # 🔍 EXPANDABLE CAMERA / WEBRTC DIAGNOSTICS
+    with st.expander("🔍 Camera / WebRTC Diagnostics & Status Debugger", expanded=False):
+        c_diag1, c_diag2 = st.columns(2)
+        with c_diag1:
+            st.write(f"• **WebRTC Link**: `{webrtc_link_status}`")
+            st.write(f"• **Browser Camera**: `{browser_cam_status}`")
+            st.write(f"• **Total Frames Received**: `{frame_count}`")
+            st.write(f"• **Last Frame Age**: `{f'{last_frame_age:.1f} seconds' if last_frame_age < 900 else 'No frames received yet'}`")
+            st.write(f"• **Camera FPS**: `{fps:.1f} FPS`")
+        with c_diag2:
+            st.write(f"• **YOLO26n Engine State**: `{yolo_state}`")
+            st.write(f"• **Last Object Detected**: `{target_cls}`")
+            st.write(f"• **Last Confidence**: `{f'{confidence * 100:.1f}%' if confidence is not None else '—'}`")
+            st.write(f"• **Tracking Status**: `{tracking_state}`")
+            st.write(f"• **WebRTC Error**: `{webrtc_error_str}`")
+
+    st.markdown("---")
 
     # ----------------------------------------------------
-    # SYSTEM PIPELINE EXECUTION
+    # SYSTEM PIPELINE COMPUTATION
     # ----------------------------------------------------
-    proxy_info_str = None
-
-    if is_live_camera and cam_source in ["LIVE LAPTOP WEBCAM", "LIVE BROWSER CAMERA", "LIVE WEBRTC CAMERA"]:
-        # Run real YOLO26n detection on live camera frame
-        raw_detections = detector.detect(frame) if detector.model_loaded else []
-        
-        if len(raw_detections) == 0:
-            target_cls = "NO TARGET DETECTED"
-            confidence = 0.0
-            track_id = None
-            target_x, target_y = 320.0, 240.0
-            error_x, error_y = 0.0, 0.0
-            active_tracks = []
-            primary_target = None
-        else:
-            active_tracks = tracker.update(raw_detections)
-            primary_target = tracker.get_primary_target()
-            if primary_target:
-                target_x = primary_target.target_x
-                target_y = primary_target.target_y
-                error_x = primary_target.error_x
-                error_y = primary_target.error_y
-                track_id = primary_target.track_id
-                confidence = primary_target.confidence
-                target_cls = primary_target.class_name
-                bbox = primary_target.bbox
-
-                # Check Demo Proxy Mode
-                if demo_proxy_mode:
-                    proxy_info_str = f"DEMO PROXY TARGET: ACTIVE | Target Role: DRONE-PROXY TEST OBJECT ({target_cls}) | Status: SIMULATION / DEMONSTRATION ONLY"
-            else:
-                target_x, target_y = 320.0, 240.0
-                error_x, error_y = 0.0, 0.0
-                track_id = None
-                confidence = 0.0
-                target_cls = "N/A"
-                bbox = []
-    else:
-        # Synthetic Target Mode
-        raw_detections = [{
-            "bbox": [sim_target_x - 30, sim_target_y - 20, sim_target_x + 30, sim_target_y + 20],
-            "center": (float(sim_target_x), float(sim_target_y)),
-            "width": 60.0,
-            "height": 40.0,
-            "confidence": 0.94,
-            "class_id": 0,
-            "class_name": "micro_drone"
-        }]
-        active_tracks = tracker.update(raw_detections)
-        primary_target = tracker.get_primary_target()
-        if primary_target:
-            target_x = primary_target.target_x
-            target_y = primary_target.target_y
-            error_x = primary_target.error_x
-            error_y = primary_target.error_y
-            track_id = primary_target.track_id
-            confidence = primary_target.confidence
-            target_cls = "SYNTHETIC DRONE TARGET"
-            bbox = primary_target.bbox
-
     # Environmental state & compensation calculations
     env_state = env_sim.get_state()
     comp_state = comp_engine.calculate_compensation(env_state, error_x, error_y)
@@ -283,19 +530,18 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
     target_error_dist = math.hypot(error_x, error_y)
     perf_results = perf_engine.evaluate_performance(env_state, comp_state, target_error_dist)
 
-    # Health & Alerts
+    # Health & Alerts Evaluation (Derived strictly from real state!)
     health_results = health_mon.update_health(
-        cam_status_str, detector.model_loaded, len(active_tracks),
+        camera_state, yolo_state, tracking_state,
         env_state, hw_state, perf_results
     )
 
-    # Update system_data.json
+    # Save state to system_data.json
     full_state_data = {
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-        "camera": {"status": cam_status_str, "fps": round(camera_mgr.fps, 1), "source": cam_source},
+        "camera": {"status": camera_state, "fps": round(fps, 1), "source": cam_source, "frames_received": frame_count},
         "detection": {
             "model_name": detector.model_name,
-            "object_count": len(raw_detections),
             "target_class": target_cls,
             "confidence": confidence,
             "bbox": bbox,
@@ -303,8 +549,7 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
         },
         "tracking": {
             "target_x": target_x, "target_y": target_y,
-            "error_x": error_x, "error_y": error_y,
-            "trajectory": primary_target.trajectory if primary_target else []
+            "error_x": error_x, "error_y": error_y
         },
         "environment": env_state,
         "compensation": comp_state,
@@ -324,56 +569,11 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
     with ov2:
         st.metric("System Health", f"{health_results['overall_health_pct']}%")
     with ov3:
-        st.metric("Detection Status", "ACTIVE" if (len(raw_detections) > 0 and target_cls != "NO TARGET DETECTED") else "NO TARGET")
+        st.metric("Detection Status", "ACTIVE" if (target_cls != "NO TARGET DETECTED") else "NO TARGET")
     with ov4:
-        st.metric("Tracking Status", f"Track ID-{track_id}" if track_id else "NO ACTIVE TARGET")
+        st.metric("Tracking Status", f"Track ID-{track_id}" if track_id is not None else "NO ACTIVE TARGET")
     with ov5:
         st.metric("Overall Performance", f"{perf_results['compensated']['overall']}%", delta=f"+{perf_results['overall_improvement_pct']}% Comp")
-
-    st.markdown("---")
-
-    # ----------------------------------------------------
-    # 2. TARGET DETECTION & IDENTIFICATION
-    # ----------------------------------------------------
-    st.subheader("2. Target Detection & Identification")
-    col_det1, col_det2 = st.columns([6, 4])
-
-    with col_det1:
-        annotated_frame = frame.copy()
-        cv2.line(annotated_frame, (320, 220), (320, 260), (0, 255, 0), 1)
-        cv2.line(annotated_frame, (300, 240), (340, 240), (0, 255, 0), 1)
-        cv2.putText(annotated_frame, "CENTER (320,240)", (325, 235), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0), 1)
-
-        for track in active_tracks:
-            bx1, by1, bx2, by2 = [int(v) for v in track.bbox]
-            cv2.rectangle(annotated_frame, (bx1, by1), (bx2, by2), (255, 105, 180), 2)
-            label_text = f"ID-{track.track_id} {track.class_name} ({track.confidence:.2f})"
-            cv2.putText(annotated_frame, label_text, (bx1, max(15, by1 - 8)),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 105, 180), 2)
-            if len(track.trajectory) > 1:
-                pts = np.array(track.trajectory, dtype=np.int32).reshape((-1, 1, 2))
-                cv2.polylines(annotated_frame, [pts], isClosed=False, color=(0, 255, 255), thickness=2)
-            cv2.line(annotated_frame, (320, 240), (int(track.target_x), int(track.target_y)), (0, 165, 255), 2)
-
-        rgb_frame = cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB)
-        st.image(rgb_frame, channels="RGB", use_container_width=True)
-
-    with col_det2:
-        st.markdown("#### Detection Result Summary")
-        st.write(f"• **Model**: `{detector.model_name}`")
-        st.write(f"• **Input Source**: `{cam_source}`")
-        st.write(f"• **Detected Class**: **`{target_cls}`**")
-        st.write(f"• **Confidence Score**: **`{confidence * 100:.1f}%`**")
-        st.write(f"• **Track Object ID**: **`{track_id if track_id else 'NO ACTIVE TARGET'}`**")
-        st.write(f"• **Inference Latency**: `{detector.last_inference_time_ms:.1f} ms`")
-        
-        if proxy_info_str:
-            st.warning(f"📱 **{proxy_info_str}**")
-
-        if "SYNTHETIC" in cam_source:
-            st.caption("ℹ️ *Mode: SYNTHETIC TARGET — SIMULATION ONLY*")
-        else:
-            st.caption("ℹ️ *Generic YOLO26n Object Detection. Displays actual COCO class labels.*")
 
     st.markdown("---")
 
@@ -525,7 +725,7 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
         st.write(f"• Potentiometers: **{'ONLINE' if is_wokwi_online else 'NOT CONNECTED'}**")
         st.write(f"• Communication: **{'CONNECTED' if is_wokwi_online else 'NOT CONNECTED'}**")
 
-    # Expandable MQTT Diagnostics Debugger (PART B)
+    # Expandable MQTT Diagnostics Debugger
     with st.expander("🔍 MQTT Diagnostics & Telemetry Debugger", expanded=False):
         st.write(f"• **MQTT Broker**: `broker.hivemq.com:1883`")
         st.write(f"• **Telemetry Topic**: `isr/sih/26050/telemetry`")
@@ -541,7 +741,7 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
     st.markdown("---")
 
     # ----------------------------------------------------
-    # 9. SUBSYSTEM HEALTH
+    # 9. SUBSYSTEM HEALTH MATRIX
     # ----------------------------------------------------
     st.subheader("9. Subsystem Health Matrix")
     health_cols = st.columns(3)
@@ -549,13 +749,13 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
     subs = list(health_results["subsystems"].items())
     for idx, (sub, stat) in enumerate(subs):
         with health_cols[idx % 3]:
-            icon = "✅" if stat in ["ONLINE", "ACTIVE", "CONNECTED"] else "❌"
+            icon = "✅" if stat in ["ONLINE", "ACTIVE", "CONNECTED"] else ("🟡" if stat in ["WAITING", "ACQUIRING", "READY"] else "❌")
             st.write(f"{icon} **{sub.upper()}**: `{stat}`")
 
     st.markdown("---")
 
     # ----------------------------------------------------
-    # 10. SYSTEM ALERTS
+    # 10. SYSTEM ALERTS FEED
     # ----------------------------------------------------
     st.subheader("10. System Alerts Feed")
     if health_results["alerts"]:
