@@ -176,16 +176,31 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
             "cell_phone_tid": None
         }
 
-    # Initialize Real System Pipeline State Variables
+    # Initialize Real System Pipeline State Variables (Guaranteed defaults for all paths)
     camera_state = "INITIALIZING"
     camera_device_label = "LOCAL DEVICE CAMERA"
     browser_video_state = "INITIALIZING"
     frame_transport_status = "NO FRAMES RECEIVED"
     cam_source = "LIVE LOCAL CAMERA"
+    yolo_state = "WAITING FOR FRAMES"
+    tracking_state = "WAITING"
+    target_cls = "NO TARGET DETECTED"
+    confidence = None
+    track_id = None
+    bbox = []
+    target_x, target_y = 320.0, 240.0
+    error_x, error_y = 0.0, 0.0
+    latency_ms = 0.0
+    cell_phone_detected = False
+    cell_phone_conf = None
+    cell_phone_tid = None
+    frame_count = 0
+    fps = 0.0
     frame_width = 0
     frame_height = 0
     track_state = "live"
     last_callback_error = "None"
+    last_recv_age = 999.0
 
     # ----------------------------------------------------
     # 2. TARGET DETECTION & IDENTIFICATION
@@ -237,6 +252,13 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
                             if img is not None:
                                 # INCREMENT ONLY WHEN AN ACTUAL FRAME CROSSED BROWSER -> PYTHON BOUNDARY!
                                 st.session_state["python_real_frames_count"] += 1
+
+                                # Calculate measured FPS based on frame reception interval
+                                if st.session_state.get("prev_frame_ts", 0) > 0:
+                                    dt = (frame_ts - st.session_state["prev_frame_ts"]) / 1000.0
+                                    if dt > 0:
+                                        st.session_state["measured_fps"] = round(1.0 / dt, 1)
+                                st.session_state["prev_frame_ts"] = frame_ts
 
                                 # 1. Run YOLO26n inference on the real decoded image matrix
                                 t0 = time.time()
@@ -359,6 +381,7 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
         yolo_state = st.session_state["yolo_engine_state"]
         tracking_state = st.session_state["tracking_engine_state"]
         frame_count = st.session_state["python_real_frames_count"]
+        fps = st.session_state.get("measured_fps", 0.0)
 
     else:
         # Synthetic Target Mode (Explicit Simulation Fallback)
@@ -390,6 +413,7 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
         error_y = target_y - 240.0
         latency_ms = 12.5
         last_recv_age = 0.0
+        fps = 30.0
 
     with col_det2:
         st.markdown("#### Detection Result Summary")
@@ -462,6 +486,7 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
             st.write(f"• **Frame Transport Status**: `{frame_transport_status}`")
             st.write(f"• **Real Frames Received (Python)**: `{st.session_state['python_real_frames_count']}`")
             st.write(f"• **Frame Resolution**: `{f'{frame_width}x{frame_height} px' if frame_width > 0 else 'N/A'}`")
+            st.write(f"• **Measured Camera FPS**: `{fps:.1f} FPS`")
             st.write(f"• **Last Frame Age**: `{f'{last_recv_age:.1f} seconds' if last_recv_age < 900 else 'No frames received yet'}`")
             st.write(f"• **Video Track State**: `{track_state}`")
             st.write(f"• **Last Component Error**: `{last_callback_error}`")

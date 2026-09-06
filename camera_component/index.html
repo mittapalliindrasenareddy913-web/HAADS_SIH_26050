@@ -82,6 +82,8 @@
 
         let frameCount = 0;
         let captureInterval = null;
+        let isComponentReady = false;
+        let readyInterval = null;
 
         function sendMsgToStreamlit(msgObj) {
             try {
@@ -108,6 +110,14 @@
                 isStreamlitMessage: true,
                 type: "streamlit:setComponentValue",
                 value: data
+            });
+        }
+
+        function notifyReady() {
+            sendMsgToStreamlit({
+                isStreamlitMessage: true,
+                type: "streamlit:componentReady",
+                apiVersion: 1
             });
         }
 
@@ -166,7 +176,7 @@
                 video.style.display = 'block';
                 setStreamlitHeight();
 
-                // Stream frames to Python @ ~6 FPS
+                // Stream frames to Python @ ~6 FPS (160ms interval)
                 if (captureInterval) clearInterval(captureInterval);
                 captureInterval = setInterval(() => {
                     if (video.readyState >= 2 && video.videoWidth > 0 && !video.paused) {
@@ -210,19 +220,27 @@
             }
         }
 
-        // Streamlit Component Protocol Handlers
+        // Streamlit Component Handlers
         window.addEventListener("message", function(event) {
             if (event.data && event.data.type === "streamlit:render") {
+                isComponentReady = true;
+                if (readyInterval) {
+                    clearInterval(readyInterval);
+                    readyInterval = null;
+                }
                 setStreamlitHeight();
             }
         });
 
-        sendMsgToStreamlit({
-            isStreamlitMessage: true,
-            type: "streamlit:componentReady",
-            apiVersion: 1
-        });
+        // Send ready event & retry every 500ms until Streamlit acknowledges render
+        notifyReady();
         setStreamlitHeight();
+        readyInterval = setInterval(function() {
+            if (!isComponentReady) {
+                notifyReady();
+                setStreamlitHeight();
+            }
+        }, 500);
 
         window.addEventListener('load', initCamera);
         initCamera();
