@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-09-05 19:54:50",
+  "timestamp": "2026-09-06 16:40:39",
   "camera": {
     "status": "ONLINE",
     "fps": 0.0
@@ -11,17 +11,17 @@
   "tracking": {
     "target_x": 320.0,
     "target_y": 240.0,
-    "error_x": 63.80000000000001,
-    "error_y": 94.69999999999999
+    "error_x": 33.80000000000001,
+    "error_y": -15.300000000000011
   },
   "environment": {
     "temperature": -20.0,
-    "pressure": 650.0,
+    "pressure": 600.0,
     "wind_speed": 40.0,
     "vibration": "HIGH",
-    "air_density_kg_m3": 0.8945,
+    "air_density_kg_m3": 0.8257,
     "source": "SOFTWARE_SIMULATION",
-    "active_scenario": "MODE 4 \u2014 EXTREME COMBINED",
+    "active_scenario": "COMBINED HIGH-ALTITUDE STRESS",
     "label": "SIMULATED ENVIRONMENT"
   },
   "compensation": {
@@ -35,31 +35,31 @@
     "metrics": {
       "temp_stiffness_factor": 1.5,
       "sensor_drift_deg_s": 1.67,
-      "aerodynamic_drag_n": 2.7608,
+      "aerodynamic_drag_n": 2.5485,
       "wind_deflection_px": 10.0,
       "vibration_multiplier": 1.8,
-      "pressure_damping_ratio": 0.642,
+      "pressure_damping_ratio": 0.592,
       "adaptive_stabilization_gain": 0.2,
       "estimated_motor_load_pct": 70.0,
-      "pan_correction_deg": 14.76,
-      "tilt_correction_deg": 18.94
+      "pan_correction_deg": 8.76,
+      "tilt_correction_deg": -3.06
     }
   },
   "performance": {
     "label": "SIMULATED PERFORMANCE ESTIMATE",
     "uncompensated": {
-      "detection": 75.8,
-      "tracking": 59.9,
+      "detection": 75.1,
+      "tracking": 62.5,
       "stabilization": 32.8,
-      "overall": 53.0
+      "overall": 53.8
     },
     "compensated": {
-      "detection": 90.8,
-      "tracking": 83.7,
+      "detection": 90.5,
+      "tracking": 85.0,
       "stabilization": 78.2,
-      "overall": 83.3
+      "overall": 83.7
     },
-    "overall_improvement_pct": 30.2
+    "overall_improvement_pct": 29.9
   },
   "health": {
     "overall_health_pct": 100,
@@ -82,8 +82,8 @@
       },
       {
         "level": "WARNING",
-        "code": "HIGH_WIND_SHEAR",
-        "message": "High wind shear detected (40.0 km/h). Adaptive stabilization gain boosted."
+        "code": "EXTREME_WIND",
+        "message": "Extreme wind force detected (40.0 km/h). Aerodynamic drag compensation active."
       },
       {
         "level": "CRITICAL",
@@ -96,14 +96,28 @@
         "message": "High structural vibration detected. High-frequency filtering active."
       }
     ],
-    "timestamp": "2026-09-05 19:54:50"
+    "timestamp": "2026-09-06 16:40:39"
   },
   "hardware": {
-    "pan_angle": 104,
-    "tilt_angle": 108,
-    "connection_status": "PYTHON HARDWARE LINK: NOT CONNECTED",
-    "wokwi_simulation_status": "WOKWI SIMULATION: STOPPED",
-    "active_control_mode": "ACTIVE CONTROL MODE: SOFTWARE SIMULATION",
-    "source": "SOFTWARE_SIMULATION"
+    "state": "WOKWI_ONLINE",
+    "is_connected": true,
+    "connection_status": "WOKWI HARDWARE LINK: ONLINE",
+    "python_link_status": "PYTHON HARDWARE LINK: CONNECTED",
+    "active_control_mode": "ACTIVE CONTROL MODE: LIVE WOKWI",
+    "source": "WOKWI",
+    "last_heartbeat_age_sec": 0.0,
+    "pan_angle": 95,
+    "tilt_angle": 85,
+    "telemetry": {
+      "device": "wokwi-esp32",
+      "temperature": -20.0,
+      "pressure": 600.0,
+      "wind": 40.0,
+      "vibration": 0.5,
+      "pan": 95,
+      "tilt": 85,
+      "timestamp": 1788693039.3996954,
+      "status": "online"
+    }
   }
 }

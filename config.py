@@ -8,6 +8,7 @@ import os
 # Project Information
 SIH_PROBLEM_ID = "26050"
 PROJECT_TITLE = "High Altitude Performance Optimization and Robust Design of Anti-Drone System"
+SYSTEM_OBJECTIVE = "Environmental compensation and robust precision tracking for reliable high-altitude operation."
 SYSTEM_MODE = "ACADEMIC_ENGINEERING_PROTOTYPE"
 
 # Base Paths
@@ -17,7 +18,6 @@ DATA_DIR = os.path.join(BASE_DIR, "data")
 SYSTEM_DATA_FILE = os.path.join(BASE_DIR, "system_data.json")
 
 # Model Configuration
-# Primary Edge AI model requested: YOLO26n (with fallback/configurable model path)
 PRIMARY_MODEL_NAME = "YOLO26n Edge AI — Object Detection & Tracking"
 DEFAULT_YOLO_WEIGHTS = "yolo26n.pt"  # Will fallback to yolov8n.pt / yolo11n.pt if yolo26n.pt is unavailable
 CUSTOM_DRONE_MODEL_PATH = os.path.join(MODELS_DIR, "custom_drone_yolo26n.pt")
@@ -60,34 +60,41 @@ TILT_CENTER_ANGLE = 90
 BASE_KP_PAN = 0.15
 BASE_KP_TILT = 0.15
 
-# Preset Scenario Definitions
+# Preset Scenario Definitions (SIH Problem Statement Aligned)
 SCENARIOS = {
-    "MODE 1 — NORMAL": {
+    "NORMAL": {
         "temperature": 20.0,
         "pressure": 950.0,
         "wind_speed": 5.0,
         "vibration": "LOW",
-        "description": "Standard ground / low altitude operating conditions."
+        "description": "Standard ground / sea-level baseline operating conditions."
     },
-    "MODE 2 — EXTREME COLD": {
+    "EXTREME COLD": {
         "temperature": -20.0,
-        "pressure": 700.0,
+        "pressure": 800.0,
         "wind_speed": 10.0,
-        "vibration": "MEDIUM",
-        "description": "High-altitude sub-zero environment causing mechanical stiffness & sensor drift."
+        "vibration": "LOW",
+        "description": "Sub-zero extreme cold causing cable rigidity & sensor drift."
     },
-    "MODE 3 — HIGH WIND": {
+    "LOW PRESSURE": {
+        "temperature": 0.0,
+        "pressure": 550.0,
+        "wind_speed": 15.0,
+        "vibration": "MEDIUM",
+        "description": "High-altitude thin atmosphere (550 hPa) causing low air density & thermal stress."
+    },
+    "HIGH WIND": {
         "temperature": -5.0,
         "pressure": 750.0,
-        "wind_speed": 40.0,
+        "wind_speed": 42.0,
         "vibration": "MEDIUM",
-        "description": "Strong cross-wind shear requiring active stabilization compensation."
+        "description": "Heavy cross-wind disturbance requiring adaptive stabilization correction."
     },
-    "MODE 4 — EXTREME COMBINED": {
+    "COMBINED HIGH-ALTITUDE STRESS": {
         "temperature": -20.0,
-        "pressure": 650.0,
+        "pressure": 600.0,
         "wind_speed": 40.0,
         "vibration": "HIGH",
-        "description": "Severe high-altitude combination of sub-zero cold, low air pressure, heavy wind & structural vibration."
+        "description": "Severe combined high-altitude hazard: sub-zero cold, low pressure, extreme wind shear & vibration."
     }
 }

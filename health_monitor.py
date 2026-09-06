@@ -1,7 +1,7 @@
 """
 HAADS SIH 26050 - Subsystem Health & Threshold Alert Monitor
-Monitors 9 critical system modules, calculates deterministic health score,
-and emits real-time rule-based alerts based on physical environmental thresholds.
+Monitors critical system modules, calculates health score,
+and emits real-time alerts based on actual hardware state and environmental thresholds.
 """
 
 import time
@@ -14,11 +14,11 @@ class HealthMonitor:
             "ai_detector": "ACTIVE",
             "tracking": "ACTIVE",
             "environment": "ACTIVE",
-            "mpu6050": "ONLINE",
-            "bme280": "ONLINE",
+            "mpu6050": "NOT CONNECTED",
+            "bme280": "NOT CONNECTED",
             "compensation": "ACTIVE",
-            "servos": "ONLINE",
-            "communication": "CONNECTED"
+            "servos": "NOT CONNECTED",
+            "communication": "NOT CONNECTED"
         }
         self.alerts = []
 
@@ -26,20 +26,21 @@ class HealthMonitor:
                       env_state, hw_state, perf_state):
         """
         Updates subsystem statuses and evaluates rule-based alerts.
+        Hardware subsystem statuses strictly reflect real heartbeat/connection state.
         """
         self.alerts = []
 
-        # 1. Camera Status
+        # 1. Camera Subsystem Status
         cam_str = str(camera_status).upper()
-        if "ONLINE" in cam_str or "ACTIVE" in cam_str or "BROWSER" in cam_str or "UPLOAD" in cam_str or "STANDBY" in cam_str or "SIMULATED" in cam_str:
-            self.subsystems["camera"] = "ONLINE"
-        else:
+        if "ERROR" in cam_str:
             self.subsystems["camera"] = "ERROR"
             self.alerts.append({
                 "level": "WARNING",
                 "code": "CAMERA_UNAVAILABLE",
                 "message": "Laptop webcam feed unavailable. Running software fallback."
             })
+        else:
+            self.subsystems["camera"] = "ONLINE"
 
         # 2. AI Detector Status
         self.subsystems["ai_detector"] = "ACTIVE" if detector_status else "ERROR"
@@ -56,24 +57,23 @@ class HealthMonitor:
         else:
             self.subsystems["tracking"] = "SEARCHING"
 
-        # 4. Hardware & Communication Status
-        hw_source = hw_state.get("source", "SOFTWARE_SIMULATION")
-        hw_conn = hw_state.get("connection_status", "")
+        # 4. Hardware & Communication Status (Strictly derived from real Wokwi heartbeat!)
+        is_wokwi_online = hw_state.get("is_connected", False)
 
-        if hw_source == "WOKWI" or "CONNECTED" in hw_conn:
+        if is_wokwi_online:
             self.subsystems["communication"] = "CONNECTED"
             self.subsystems["mpu6050"] = "ONLINE"
             self.subsystems["bme280"] = "ONLINE"
             self.subsystems["servos"] = "ONLINE"
         else:
             self.subsystems["communication"] = "NOT CONNECTED"
-            self.subsystems["mpu6050"] = "SOFTWARE_SIMULATION"
-            self.subsystems["bme280"] = "SOFTWARE_SIMULATION"
-            self.subsystems["servos"] = "SOFTWARE_SIMULATION"
+            self.subsystems["mpu6050"] = "NOT CONNECTED"
+            self.subsystems["bme280"] = "NOT CONNECTED"
+            self.subsystems["servos"] = "NOT CONNECTED"
             self.alerts.append({
                 "level": "INFO",
                 "code": "WOKWI_OFFLINE",
-                "message": "Wokwi serial/HTTP link NOT CONNECTED. Active mode: SOFTWARE SIMULATION FALLBACK."
+                "message": "Wokwi simulation is not running or no telemetry heartbeat has been received. Software simulation fallback is active."
             })
 
         # 5. Environmental Threshold Alerts
@@ -88,11 +88,17 @@ class HealthMonitor:
                 "message": f"Sub-zero extreme cold ({temp:.1f}°C). Mechanical stiffness compensation active."
             })
 
-        if wind >= 35.0:
+        if wind >= 25.0 and wind < 40.0:
             self.alerts.append({
                 "level": "WARNING",
-                "code": "HIGH_WIND_SHEAR",
+                "code": "HIGH_WIND",
                 "message": f"High wind shear detected ({wind:.1f} km/h). Adaptive stabilization gain boosted."
+            })
+        elif wind >= 40.0:
+            self.alerts.append({
+                "level": "WARNING",
+                "code": "EXTREME_WIND",
+                "message": f"Extreme wind force detected ({wind:.1f} km/h). Aerodynamic drag compensation active."
             })
 
         if temp <= -15.0 and wind >= 35.0:
@@ -109,19 +115,21 @@ class HealthMonitor:
                 "message": "High structural vibration detected. High-frequency filtering active."
             })
 
+        if not self.alerts:
+            self.alerts.append({
+                "level": "INFO",
+                "code": "SYSTEM_NORMAL",
+                "message": "All environmental parameters and operational subsystems operating normally."
+            })
+
         # 6. Overall Health Score Calculation (0-100)
         health_points = 100
         if self.subsystems["camera"] == "ERROR":
-            health_points -= 20
+            health_points -= 15
         if self.subsystems["ai_detector"] == "ERROR":
             health_points -= 30
-        if perf_state.get("compensated", {}).get("overall", 100) < 60:
-            health_points -= 15
-            self.alerts.append({
-                "level": "WARNING",
-                "code": "PERFORMANCE_DEGRADED",
-                "message": "Overall system performance estimated below 60% due to severe environmental stress."
-            })
+        if not is_wokwi_online:
+            health_points -= 10  # Minor reduction for running software simulation fallback
 
         overall_health = max(0, health_points)
 
