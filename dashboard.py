@@ -408,6 +408,30 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
     webrtc_error_str = "None"
     webrtc_ctx = None
 
+    # Read query parameters for camera device selection (set by browser JS component)
+    query_params = st.query_params
+    sel_cam_id = query_params.get("cam_id", None)
+    sel_cam_name = query_params.get("cam_name", "Integrated Laptop Camera")
+
+    if sel_cam_id:
+        media_constraints = {
+            "video": {
+                "deviceId": {"exact": sel_cam_id},
+                "width": {"ideal": 640},
+                "height": {"ideal": 480}
+            },
+            "audio": False
+        }
+    else:
+        media_constraints = {
+            "video": {
+                "facingMode": "user",
+                "width": {"ideal": 640},
+                "height": {"ideal": 480}
+            },
+            "audio": False
+        }
+
     # ----------------------------------------------------
     # 2. TARGET DETECTION & IDENTIFICATION
     # ----------------------------------------------------
@@ -422,26 +446,72 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
         cam_source = "LIVE LAPTOP CAMERA"
         
         with col_det1:
-            st.markdown("#### 📷 LIVE LAPTOP CAMERA")
+            st.markdown(f"#### 📷 LIVE LAPTOP CAMERA (`{sel_cam_name}`)")
             
             if WEBRTC_AVAILABLE:
+                # Auto-select physical Integrated Laptop Camera in browser JS & bypass MITTAPALLI
+                st.components.v1.html(
+                    """
+                    <script>
+                    (async function() {
+                        try {
+                            let devices = await navigator.mediaDevices.enumerateDevices();
+                            let videoInputs = devices.filter(d => d.kind === 'videoinput');
+
+                            const needsPermission = videoInputs.length > 0 && videoInputs.every(d => !d.label);
+                            if (needsPermission) {
+                                try {
+                                    const tempStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+                                    tempStream.getTracks().forEach(t => t.stop());
+                                    devices = await navigator.mediaDevices.enumerateDevices();
+                                    videoInputs = devices.filter(d => d.kind === 'videoinput');
+                                } catch(e) {
+                                    console.error("[CameraSelector] Initial permission prompt error:", e);
+                                }
+                            }
+
+                            const phoneKeywords = ["mittapalli", "phone link", "android", "iphone", "mobile", "phone", "remote camera", "continuity", "virtual"];
+                            const laptopKeywords = ["integrated", "built-in", "hd webcam", "hd camera", "laptop", "internal", "webcam"];
+
+                            let candidates = videoInputs.filter(d => {
+                                const lbl = (d.label || '').toLowerCase();
+                                return !phoneKeywords.some(kw => lbl.includes(kw));
+                            });
+                            if (candidates.length === 0) candidates = videoInputs;
+
+                            let selected = candidates.find(d => {
+                                const lbl = (d.label || '').toLowerCase();
+                                return laptopKeywords.some(kw => lbl.includes(kw));
+                            }) || candidates[0];
+
+                            if (selected && selected.deviceId) {
+                                const parentUrl = new URL(window.parent.location.href);
+                                const currId = parentUrl.searchParams.get("cam_id");
+                                if (currId !== selected.deviceId) {
+                                    parentUrl.searchParams.set("cam_id", selected.deviceId);
+                                    parentUrl.searchParams.set("cam_name", selected.label || "Integrated Laptop Camera");
+                                    window.parent.location.search = parentUrl.search;
+                                }
+                            }
+                        } catch(e) {
+                            console.error("[CameraSelector] Error:", e);
+                        }
+                    })();
+                    </script>
+                    """,
+                    height=0,
+                )
+
                 try:
-                    # Single Authoritative WebRTC Streamer (Direct Local Laptop Camera)
+                    # WebRTC Streamer with exact deviceId & media controls enabled
                     webrtc_ctx = webrtc_streamer(
                         key="haads-live-camera",
                         mode=WebRtcMode.SENDRECV,
                         video_processor_factory=YOLOVideoProcessor,
                         desired_playing_state=True,
-                        media_toggle_controls=False,
+                        media_toggle_controls=True,
                         rtc_configuration=RTCConfiguration({"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}),
-                        media_stream_constraints={
-                            "video": {
-                                "facingMode": "user",
-                                "width": {"ideal": 640},
-                                "height": {"ideal": 480}
-                            },
-                            "audio": False
-                        },
+                        media_stream_constraints=media_constraints,
                         async_processing=True,
                         video_html_attrs={"autoPlay": True, "controls": False, "style": {"width": "100%", "borderRadius": "8px"}, "muted": True, "playsInline": True}
                     )
