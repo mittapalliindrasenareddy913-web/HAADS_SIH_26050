@@ -2,7 +2,7 @@
 HAADS SIH 26050 - Streamlit Engineering Dashboard Module
 Renders the 11-section engineering dashboard for High Altitude Anti-Drone System prototype.
 SIH Problem Statement 26050 Alignment: High Altitude Performance Optimization and Robust Design.
-Includes device-local laptop webcam selection, automatic permission acquisition, mobile phone alerts, and Wokwi MQTT.
+Includes PyAV WebRTC frame transport pipeline, device-local webcam selection, mobile phone alerts, and Wokwi MQTT telemetry.
 """
 
 import streamlit as st
@@ -56,14 +56,18 @@ class YOLOVideoProcessor(VideoProcessorBase):
         self.detector = get_shared_detector()
         self.tracker = PersistentTracker()
 
+        self.callback_count = 0
         self.frame_count = 0
         self.last_frame_time = 0.0
         self.fps = 0.0
         self.device_label = "Integrated Laptop Camera"
+        self.frame_width = 0
+        self.frame_height = 0
+        self.last_callback_error = "None"
         
         # Real Subsystem States
-        self.camera_state = "ONLINE"
-        self.yolo_state = "ACTIVE" if self.detector.model_loaded else "ERROR"
+        self.camera_state = "WAITING FOR PERMISSION"
+        self.yolo_state = "WAITING"
         self.tracking_state = "WAITING"
         
         # Detection Metadata
@@ -85,105 +89,118 @@ class YOLOVideoProcessor(VideoProcessorBase):
         self.active_tracks = []
 
     def recv(self, frame: av.VideoFrame) -> av.VideoFrame:
-        img = frame.to_ndarray(format="bgr24")
-        now = time.time()
+        try:
+            img = frame.to_ndarray(format="bgr24")
+            now = time.time()
+            h, w, c = img.shape
 
-        with self.lock:
-            if self.last_frame_time > 0:
-                dt = now - self.last_frame_time
-                if dt > 0:
-                    self.fps = 0.9 * self.fps + 0.1 * (1.0 / dt) if self.fps > 0 else (1.0 / dt)
-            self.last_frame_time = now
-            self.frame_count += 1
-            self.camera_state = "ONLINE"
+            with self.lock:
+                self.callback_count += 1
+                self.frame_count += 1
+                self.frame_width = w
+                self.frame_height = h
+                
+                if self.last_frame_time > 0:
+                    dt = now - self.last_frame_time
+                    if dt > 0:
+                        self.fps = 0.9 * self.fps + 0.1 * (1.0 / dt) if self.fps > 0 else (1.0 / dt)
+                self.last_frame_time = now
+                self.camera_state = "ONLINE"
 
-            # 1. Run YOLO inference on real camera frame
-            t0 = time.time()
-            if self.detector.model_loaded:
-                self.yolo_state = "ACTIVE"
-                raw_detections = self.detector.detect(img)
-            else:
-                self.yolo_state = "ERROR"
-                raw_detections = []
-            self.latency_ms = (time.time() - t0) * 1000.0
-
-            # 2. Update persistent tracker with real detections
-            if len(raw_detections) == 0:
-                self.tracking_state = "WAITING"
-                self.detected_class = "NO TARGET DETECTED"
-                self.confidence = None
-                self.track_id = None
-                self.bbox = []
-                self.target_x = 320.0
-                self.target_y = 240.0
-                self.error_x = 0.0
-                self.error_y = 0.0
-                self.active_tracks = []
-
-                if now - self.last_phone_detection_time > 2.0:
-                    self.cell_phone_detected = False
-                    self.cell_phone_confidence = None
-                    self.cell_phone_track_id = None
-            else:
-                active_tracks = self.tracker.update(raw_detections)
-                self.active_tracks = active_tracks
-                primary_target = self.tracker.get_primary_target()
-
-                if primary_target:
-                    self.tracking_state = "ACTIVE"
-                    self.target_x = float(primary_target.target_x)
-                    self.target_y = float(primary_target.target_y)
-                    self.error_x = float(primary_target.error_x)
-                    self.error_y = float(primary_target.error_y)
-                    self.track_id = primary_target.track_id
-                    self.confidence = float(primary_target.confidence)
-                    self.detected_class = primary_target.class_name
-                    self.bbox = primary_target.bbox
+                # 1. Run YOLO inference on real camera frame
+                t0 = time.time()
+                if self.detector and self.detector.model_loaded:
+                    self.yolo_state = "ACTIVE"
+                    raw_detections = self.detector.detect(img)
+                    self.latency_ms = (time.time() - t0) * 1000.0
                 else:
-                    self.tracking_state = "ACQUIRING"
-                    first_det = raw_detections[0]
-                    self.detected_class = first_det["class_name"]
-                    self.confidence = float(first_det["confidence"])
-                    self.bbox = first_det["bbox"]
-                    self.target_x, self.target_y = float(first_det["center"][0]), float(first_det["center"][1])
-                    self.error_x = self.target_x - 320.0
-                    self.error_y = self.target_y - 240.0
+                    self.yolo_state = "ERROR" if self.detector else "WAITING"
+                    raw_detections = []
+
+                # 2. Update persistent tracker with real detections
+                if len(raw_detections) == 0:
+                    self.tracking_state = "WAITING"
+                    self.detected_class = "NO TARGET DETECTED"
+                    self.confidence = None
                     self.track_id = None
+                    self.bbox = []
+                    self.target_x = 320.0
+                    self.target_y = 240.0
+                    self.error_x = 0.0
+                    self.error_y = 0.0
+                    self.active_tracks = []
 
-                # Check if cell phone is detected
-                found_phone = False
-                for det in raw_detections:
-                    cname = det["class_name"].lower()
-                    if cname in ["cell phone", "mobile phone", "phone"]:
-                        found_phone = True
-                        self.cell_phone_detected = True
-                        self.cell_phone_confidence = float(det["confidence"])
-                        self.cell_phone_track_id = self.track_id if self.track_id else 1
-                        self.last_phone_detection_time = now
-                        break
+                    if now - self.last_phone_detection_time > 2.0:
+                        self.cell_phone_detected = False
+                        self.cell_phone_confidence = None
+                        self.cell_phone_track_id = None
+                else:
+                    active_tracks = self.tracker.update(raw_detections)
+                    self.active_tracks = active_tracks
+                    primary_target = self.tracker.get_primary_target()
 
-                if not found_phone and (now - self.last_phone_detection_time > 2.0):
-                    self.cell_phone_detected = False
-                    self.cell_phone_confidence = None
-                    self.cell_phone_track_id = None
+                    if primary_target:
+                        self.tracking_state = "ACTIVE"
+                        self.target_x = float(primary_target.target_x)
+                        self.target_y = float(primary_target.target_y)
+                        self.error_x = float(primary_target.error_x)
+                        self.error_y = float(primary_target.error_y)
+                        self.track_id = primary_target.track_id
+                        self.confidence = float(primary_target.confidence)
+                        self.detected_class = primary_target.class_name
+                        self.bbox = primary_target.bbox
+                    else:
+                        self.tracking_state = "ACQUIRING"
+                        first_det = raw_detections[0]
+                        self.detected_class = first_det["class_name"]
+                        self.confidence = float(first_det["confidence"])
+                        self.bbox = first_det["bbox"]
+                        self.target_x, self.target_y = float(first_det["center"][0]), float(first_det["center"][1])
+                        self.error_x = self.target_x - 320.0
+                        self.error_y = self.target_y - 240.0
+                        self.track_id = None
 
-            # 3. Draw tracking bounding boxes & reticle over real frame
-            cv2.line(img, (320, 220), (320, 260), (0, 255, 0), 1)
-            cv2.line(img, (300, 240), (340, 240), (0, 255, 0), 1)
-            cv2.putText(img, "CENTER (320,240)", (325, 235), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0), 1)
+                    # Check if cell phone is detected
+                    found_phone = False
+                    for det in raw_detections:
+                        cname = det["class_name"].lower()
+                        if cname in ["cell phone", "mobile phone", "phone"]:
+                            found_phone = True
+                            self.cell_phone_detected = True
+                            self.cell_phone_confidence = float(det["confidence"])
+                            self.cell_phone_track_id = self.track_id if self.track_id else 1
+                            self.last_phone_detection_time = now
+                            break
 
-            for track in self.active_tracks:
-                bx1, by1, bx2, by2 = [int(v) for v in track.bbox]
-                cv2.rectangle(img, (bx1, by1), (bx2, by2), (255, 105, 180), 2)
-                label_text = f"ID-{track.track_id} {track.class_name} ({track.confidence:.2f})"
-                cv2.putText(img, label_text, (bx1, max(15, by1 - 8)),
-                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 105, 180), 2)
-                if len(track.trajectory) > 1:
-                    pts = np.array(track.trajectory, dtype=np.int32).reshape((-1, 1, 2))
-                    cv2.polylines(img, [pts], isClosed=False, color=(0, 255, 255), thickness=2)
-                cv2.line(img, (320, 240), (int(track.target_x), int(track.target_y)), (0, 165, 255), 2)
+                    if not found_phone and (now - self.last_phone_detection_time > 2.0):
+                        self.cell_phone_detected = False
+                        self.cell_phone_confidence = None
+                        self.cell_phone_track_id = None
 
-        return av.VideoFrame.from_ndarray(img, format="bgr24")
+                # 3. Draw tracking bounding boxes & reticle over real frame
+                cv2.line(img, (320, 220), (320, 260), (0, 255, 0), 1)
+                cv2.line(img, (300, 240), (340, 240), (0, 255, 0), 1)
+                cv2.putText(img, "CENTER (320,240)", (325, 235), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0), 1)
+
+                for track in self.active_tracks:
+                    bx1, by1, bx2, by2 = [int(v) for v in track.bbox]
+                    cv2.rectangle(img, (bx1, by1), (bx2, by2), (255, 105, 180), 2)
+                    label_text = f"ID-{track.track_id} {track.class_name} ({track.confidence:.2f})"
+                    cv2.putText(img, label_text, (bx1, max(15, by1 - 8)),
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 105, 180), 2)
+                    if len(track.trajectory) > 1:
+                        pts = np.array(track.trajectory, dtype=np.int32).reshape((-1, 1, 2))
+                        cv2.polylines(img, [pts], isClosed=False, color=(0, 255, 255), thickness=2)
+                    cv2.line(img, (320, 240), (int(track.target_x), int(track.target_y)), (0, 165, 255), 2)
+
+            return av.VideoFrame.from_ndarray(img, format="bgr24")
+
+        except Exception as e:
+            with self.lock:
+                self.last_callback_error = f"{type(e).__name__}: {str(e)}"
+                self.yolo_state = "ERROR"
+            print(f"[YOLOVideoProcessor] recv Exception: {e}")
+            return frame
 
     def get_state(self):
         with self.lock:
@@ -198,10 +215,14 @@ class YOLOVideoProcessor(VideoProcessorBase):
                 "device_label": self.device_label,
                 "yolo_state": self.yolo_state if is_online else "WAITING",
                 "tracking_state": self.tracking_state if is_online else "WAITING",
+                "callback_count": self.callback_count,
                 "frame_count": self.frame_count,
                 "fps": round(self.fps, 1),
                 "last_frame_age": round(frame_age, 1),
                 "last_frame_time": self.last_frame_time,
+                "frame_width": self.frame_width,
+                "frame_height": self.frame_height,
+                "last_callback_error": self.last_callback_error,
                 "detected_class": self.detected_class if is_online else "NO TARGET DETECTED",
                 "confidence": self.confidence if is_online else None,
                 "track_id": self.track_id if is_online else None,
@@ -335,7 +356,7 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
 
     # Initialize Real System Pipeline State Variables
     camera_state = "WAITING FOR PERMISSION"
-    camera_device_label = "Scanning for Integrated Laptop Camera..."
+    camera_device_label = "Integrated Laptop Camera"
     yolo_state = "WAITING"
     tracking_state = "WAITING"
     target_cls = "NO TARGET DETECTED"
@@ -350,10 +371,14 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
     cell_phone_conf = None
     cell_phone_tid = None
     webrtc_link_status = "CONNECTING / AUTOMATIC START"
-    browser_cam_status = "WAITING FOR PERMISSION"
+    browser_cam_status = "AVAILABLE / PERMISSION GRANTED"
+    callback_count = 0
     frame_count = 0
     fps = 0.0
     last_frame_age = 999.0
+    frame_width = 0
+    frame_height = 0
+    last_callback_error = "None"
     webrtc_error_str = "None"
     webrtc_ctx = None
 
@@ -371,7 +396,7 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
             
             if WEBRTC_AVAILABLE:
                 try:
-                    # Autostart camera without START button using desired_playing_state=True & media_toggle_controls=False
+                    # WebRTC Streamer — Exclusively handles browser camera stream & passes frames directly to YOLOVideoProcessor.recv
                     webrtc_ctx = webrtc_streamer(
                         key="haads-live-camera",
                         video_processor_factory=YOLOVideoProcessor,
@@ -394,6 +419,14 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
                     camera_device_label = proc_state.get("device_label", "Integrated Laptop Camera")
                     yolo_state = proc_state["yolo_state"]
                     tracking_state = proc_state["tracking_state"]
+                    callback_count = proc_state["callback_count"]
+                    frame_count = proc_state["frame_count"]
+                    fps = proc_state["fps"]
+                    last_frame_age = proc_state["last_frame_age"]
+                    frame_width = proc_state["frame_width"]
+                    frame_height = proc_state["frame_height"]
+                    last_callback_error = proc_state["last_callback_error"]
+                    
                     target_cls = proc_state["detected_class"]
                     confidence = proc_state["confidence"]
                     track_id = proc_state["track_id"]
@@ -404,9 +437,10 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
                     cell_phone_detected = proc_state["cell_phone_detected"]
                     cell_phone_conf = proc_state["cell_phone_confidence"]
                     cell_phone_tid = proc_state["cell_phone_track_id"]
-                    frame_count = proc_state["frame_count"]
-                    fps = proc_state["fps"]
-                    last_frame_age = proc_state["last_frame_age"]
+
+                    if frame_count == 0:
+                        st.info("🟡 WebRTC Peer Connected — Awaiting first video frame from browser...")
+
                 else:
                     webrtc_link_status = "CONNECTING / AUTOMATIC START"
                     browser_cam_status = "WAITING FOR PERMISSION"
@@ -416,97 +450,7 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
                     target_cls = "NO TARGET DETECTED"
                     confidence = None
                     track_id = None
-                    
-                    # Render Device-Local Laptop Webcam Selection HTML5 Component
-                    st.components.v1.html("""
-                        <div style="background-color: #1e222d; padding: 12px; border-radius: 8px; border: 1px solid #2d313e; text-align: center;">
-                            <video id="haads-laptop-cam" autoplay muted playsinline style="width: 100%; max-height: 340px; border-radius: 6px; background: #0e1117;"></video>
-                            <p id="cam-status-msg" style="color: #f9e79f; font-size: 0.88em; margin-top: 6px; margin-bottom: 0;">
-                                🟡 Requesting Browser Camera Permission... Please click <b>ALLOW</b> in browser dialog.
-                            </p>
-                        </div>
-                        <script>
-                        (async function() {
-                            const msgEl = document.getElementById('cam-status-msg');
-                            const videoEl = document.getElementById('haads-laptop-cam');
-                            const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
-                            
-                            async function selectBestDevice() {
-                                let tempStream = null;
-                                try {
-                                    tempStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
-                                } catch (e) {
-                                    console.warn("Initial permission request:", e);
-                                }
-                                
-                                const devices = await navigator.mediaDevices.enumerateDevices();
-                                const videoInputs = devices.filter(d => d.kind === 'videoinput');
-                                
-                                if (tempStream) {
-                                    tempStream.getTracks().forEach(t => t.stop());
-                                }
-
-                                if (videoInputs.length === 0) {
-                                    return { deviceId: null, label: "No Camera Device Found" };
-                                }
-
-                                if (isMobile) {
-                                    return { deviceId: videoInputs[0].deviceId, label: videoInputs[0].label || "Mobile Front/Main Camera" };
-                                }
-
-                                // Laptop / Desktop: Exclude remote phone cameras (e.g. Phone Link, MITTAPALLI, Android, iPhone)
-                                const phoneKeywords = ["phone link", "mittapalli", "android", "iphone", "mobile", "phone", "remote camera", "continuity", "virtual"];
-                                const laptopKeywords = ["integrated", "built-in", "hd webcam", "hd camera", "laptop", "webcam", "internal"];
-
-                                const nonPhoneDevices = videoInputs.filter(dev => {
-                                    const lbl = (dev.label || "").toLowerCase();
-                                    return !phoneKeywords.some(kw => lbl.includes(kw));
-                                });
-
-                                const validCandidates = nonPhoneDevices.length > 0 ? nonPhoneDevices : videoInputs;
-
-                                for (const dev of validCandidates) {
-                                    const lbl = (dev.label || "").toLowerCase();
-                                    if (laptopKeywords.some(kw => lbl.includes(kw))) {
-                                        return { deviceId: dev.deviceId, label: dev.label || "Integrated Laptop Camera" };
-                                    }
-                                }
-
-                                return { deviceId: validCandidates[0].deviceId, label: validCandidates[0].label || "Laptop Webcam" };
-                            }
-
-                            try {
-                                const chosen = await selectBestDevice();
-                                const constraints = chosen.deviceId ? 
-                                    { video: { deviceId: { exact: chosen.deviceId }, width: { ideal: 640 }, height: { ideal: 480 } }, audio: false } :
-                                    { video: { facingMode: isMobile ? "user" : "environment" }, audio: false };
-
-                                const stream = await navigator.mediaDevices.getUserMedia(constraints);
-                                if (videoEl) {
-                                    videoEl.srcObject = stream;
-                                }
-                                if (msgEl) {
-                                    msgEl.innerHTML = "<span style='color:#a3e4d7;'>🟢 Active Camera: <b>" + (chosen.label || "Integrated Laptop Camera") + "</b></span>";
-                                }
-                            } catch (err) {
-                                console.error("Camera Error:", err);
-                                if (msgEl) {
-                                    if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
-                                        if (window.self !== window.top) {
-                                            msgEl.innerHTML = "<span style='color:#fadbd8;'>⛔ Camera access blocked by embedding page. Open application directly or enable allow='camera' on iframe.</span>";
-                                        } else {
-                                            msgEl.innerHTML = "<span style='color:#fadbd8;'>⛔ Camera Permission Denied by Browser. Please allow camera access in address bar.</span>";
-                                        }
-                                    } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
-                                        msgEl.innerHTML = "<span style='color:#fadbd8;'>❌ No Webcam Device Detected.</span>";
-                                    } else {
-                                        msgEl.innerHTML = "<span style='color:#fadbd8;'>⚠️ Camera Error: " + err.message + "</span>";
-                                    }
-                                }
-                            }
-                        })();
-                        </script>
-                    """, height=380)
+                    st.info("ℹ️ Initializing camera... Allow browser camera permission if prompted by browser.")
 
             else:
                 st.error("streamlit-webrtc package is unavailable.")
@@ -602,17 +546,21 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
         c_diag1, c_diag2 = st.columns(2)
         with c_diag1:
             st.write(f"• **Active Camera Device**: `{camera_device_label}`")
-            st.write(f"• **WebRTC Link**: `{webrtc_link_status}`")
-            st.write(f"• **Browser Camera**: `{browser_cam_status}`")
+            st.write(f"• **WebRTC Link State**: `{webrtc_link_status}`")
+            st.write(f"• **Browser Camera State**: `{browser_cam_status}`")
             st.write(f"• **Total Frames Received**: `{frame_count}`")
+            st.write(f"• **Frame Callback Count**: `{callback_count}`")
+            st.write(f"• **Frame Resolution**: `{f'{frame_width}x{frame_height} px' if frame_width > 0 else 'N/A'}`")
+            st.write(f"• **Measured Camera FPS**: `{fps:.1f} FPS`")
             st.write(f"• **Last Frame Age**: `{f'{last_frame_age:.1f} seconds' if last_frame_age < 900 else 'No frames received yet'}`")
-            st.write(f"• **Camera FPS**: `{fps:.1f} FPS`")
         with c_diag2:
             st.write(f"• **YOLO26n Engine State**: `{yolo_state}`")
             st.write(f"• **Last Object Detected**: `{target_cls}`")
-            st.write(f"• **Last Confidence**: `{f'{confidence * 100:.1f}%' if confidence is not None else '—'}`")
+            st.write(f"• **Last Confidence Score**: `{f'{confidence * 100:.1f}%' if confidence is not None else '—'}`")
             st.write(f"• **Tracking Status**: `{tracking_state}`")
-            st.write(f"• **WebRTC Error**: `{webrtc_error_str}`")
+            st.write(f"• **Track Object ID**: `{track_id if track_id is not None else '—'}`")
+            st.write(f"• **Inference Latency**: `{f'{latency_ms:.1f} ms' if latency_ms > 0 else '—'}`")
+            st.write(f"• **Last Callback Error**: `{last_callback_error}`")
 
     st.markdown("---")
 
