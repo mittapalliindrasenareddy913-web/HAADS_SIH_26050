@@ -426,7 +426,7 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
             
             if WEBRTC_AVAILABLE:
                 try:
-                    # Single Authoritative WebRTC Streamer (Standard SENDRECV Pipeline)
+                    # Single Authoritative WebRTC Streamer (Direct Local Laptop Camera)
                     webrtc_ctx = webrtc_streamer(
                         key="haads-live-camera",
                         mode=WebRtcMode.SENDRECV,
@@ -434,7 +434,14 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
                         desired_playing_state=True,
                         media_toggle_controls=False,
                         rtc_configuration=RTCConfiguration({"iceServers": [{"urls": ["stun:stun.l.google.com:19302"]}]}),
-                        media_stream_constraints={"video": True, "audio": False},
+                        media_stream_constraints={
+                            "video": {
+                                "facingMode": "user",
+                                "width": {"ideal": 640},
+                                "height": {"ideal": 480}
+                            },
+                            "audio": False
+                        },
                         async_processing=True,
                         video_html_attrs={"autoPlay": True, "controls": False, "style": {"width": "100%", "borderRadius": "8px"}, "muted": True, "playsInline": True}
                     )
