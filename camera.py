@@ -4,6 +4,7 @@ Handles real laptop built-in webcam capture via OpenCV.
 Provides robust permission, unavailable, and safe release handling.
 """
 
+import sys
 import cv2
 import time
 import numpy as np
@@ -69,15 +70,23 @@ class CameraManager:
         """Attempts to open the laptop built-in webcam."""
         try:
             # Try DirectShow backend first on Windows for faster initialization
-            self.cap = cv2.VideoCapture(self.camera_index, cv2.CAP_DSHOW)
-            if not self.cap.isOpened():
+            if sys.platform.startswith("win"):
+                self.cap = cv2.VideoCapture(self.camera_index, cv2.CAP_DSHOW)
+            else:
+                self.cap = cv2.VideoCapture(self.camera_index)
+
+            if self.cap is None or not self.cap.isOpened():
                 # Fallback to default backend
                 self.cap = cv2.VideoCapture(self.camera_index)
             
-            if not self.cap.isOpened():
+            if self.cap is None or not self.cap.isOpened():
                 # Try index 1 if index 0 failed
-                self.cap = cv2.VideoCapture(1, cv2.CAP_DSHOW)
-                if not self.cap.isOpened():
+                if sys.platform.startswith("win"):
+                    self.cap = cv2.VideoCapture(1, cv2.CAP_DSHOW)
+                else:
+                    self.cap = cv2.VideoCapture(1)
+
+                if self.cap is None or not self.cap.isOpened():
                     self.cap = cv2.VideoCapture(1)
 
             if self.cap is not None and self.cap.isOpened():

@@ -52,13 +52,6 @@ def create_synthetic_drone_frame(target_x, target_y):
 
 
 def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_engine, health_mon, hw_interface, data_mgr):
-    st.set_page_config(
-        page_title="HAADS - High Altitude Edge AI System",
-        page_icon="🎯",
-        layout="wide",
-        initial_sidebar_state="expanded"
-    )
-
     # ----------------------------------------------------
     # GUARANTEED SYSTEM PIPELINE STATE DEFAULTS
     # ----------------------------------------------------

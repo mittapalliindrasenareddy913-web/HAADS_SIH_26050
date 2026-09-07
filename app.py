@@ -48,6 +48,13 @@ def load_ai_and_camera():
 
 
 def main():
+    st.set_page_config(
+        page_title="HAADS - High Altitude Edge AI System",
+        page_icon="🎯",
+        layout="wide",
+        initial_sidebar_state="expanded"
+    )
+
     camera_mgr, detector, tracker = load_ai_and_camera()
 
     # Session State management for dynamic simulation engines
