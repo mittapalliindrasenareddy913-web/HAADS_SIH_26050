@@ -9,10 +9,11 @@ Performance Evaluation -> Truthful Health Matrix -> JSON Logging -> MQTT Wokwi H
 import sys
 import os
 import time
+import numpy as np
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from camera import CameraManager, filter_camera_devices
+from camera import CameraManager
 from detector import YOLO26nDetector
 from tracker import PersistentTracker
 from environment import EnvironmentSimulator
@@ -22,34 +23,26 @@ from health_monitor import HealthMonitor
 from hardware_interface import HardwareInterface
 from data_manager import SystemDataManager
 
-
 def run_integration_test():
     print("==========================================================")
     print("HAADS SIH 26050 - FULL SYSTEM INTEGRATION VERIFICATION")
     print("==========================================================")
 
-    # 1. Device Filter Unit Test — Laptop Browser Mode
-    print("\n[TEST 1/13] Testing Device-Local Laptop Camera Selection Filter...")
-    mock_devices = [
-        {"label": "Phone Link - MITTAPALLI", "deviceId": "dev_phone1"},
-        {"label": "Android Virtual Camera", "deviceId": "dev_phone2"},
-        {"label": "Integrated Camera (04f2:b6d9)", "deviceId": "dev_laptop1"},
-        {"label": "USB HD Webcam", "deviceId": "dev_laptop2"}
-    ]
-    chosen_dev, chosen_label = filter_camera_devices(mock_devices, is_mobile=False)
-    print(f"  Laptop Candidate Devices: {[d['label'] for d in mock_devices]}")
-    print(f"  Selected Device: '{chosen_label}' (ID: {chosen_dev['deviceId']})")
-    assert "MITTAPALLI" not in chosen_label, "Filter failed: Phone Link camera was selected on laptop!"
-    assert "Integrated" in chosen_label or "Webcam" in chosen_label, "Filter failed: Built-in laptop camera was not prioritized!"
+    # 1. Camera Manager Unit Test — Laptop / Desktop Stream Mode
+    print("\n[TEST 1/13] Testing Local Device Camera Initialization...")
+    cam_laptop = CameraManager(camera_index=0)
+    start_ok = cam_laptop.start()
+    assert start_ok is True, "CameraManager.start() failed!"
+    assert cam_laptop.status == "ONLINE", f"Expected ONLINE status, got '{cam_laptop.status}'"
+    print(f"  Laptop Camera Manager Status: '{cam_laptop.status}' | Ready: {start_ok}")
 
-    # 2. Device Filter Unit Test — Mobile Browser Mode
-    print("\n[TEST 2/13] Testing Mobile Browser Camera Selection...")
-    mock_mobile_devices = [
-        {"label": "Android Front Camera", "deviceId": "dev_mobile1"}
-    ]
-    mobile_dev, mobile_label = filter_camera_devices(mock_mobile_devices, is_mobile=True)
-    print(f"  Mobile Selected Device: '{mobile_label}'")
-    assert "Android" in mobile_label, "Filter failed: Mobile camera excluded on mobile browser!"
+    # 2. Camera Manager Unit Test — Browser Frame Ingestion Mode
+    print("\n[TEST 2/13] Testing Browser Frame Ingestion & FPS Calculation...")
+    mock_frame = np.zeros((480, 640, 3), dtype=np.uint8)
+    cam_laptop.update_browser_frame(mock_frame)
+    ret, frame_out = cam_laptop.get_frame()
+    assert ret is True and frame_out is not None, "Failed to retrieve ingested frame from CameraManager!"
+    print(f"  Ingested Frame Size: {frame_out.shape[1]}x{frame_out.shape[0]} px | Calculated FPS: {cam_laptop.fps:.1f}")
 
     # 3. Initializing Laptop Webcam Manager
     print("\n[TEST 3/13] Initializing Laptop Webcam Manager...")
@@ -179,7 +172,7 @@ def run_integration_test():
     dm = SystemDataManager()
     full_state = {
         "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
-        "camera": {"status": cam.status, "device_label": chosen_label, "fps": round(cam.fps, 1)},
+        "camera": {"status": cam.status, "device_label": "LOCAL DEVICE CAMERA", "fps": round(cam.fps, 1)},
         "detection": {"model_name": detector.model_name, "object_count": len(mock_phone_detection)},
         "tracking": {"target_x": phone_target.target_x, "target_y": phone_target.target_y, "error_x": err_x, "error_y": err_y},
         "environment": env_state,
