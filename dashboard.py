@@ -245,6 +245,7 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
                             img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
 
                             if img is not None:
+                                camera_mgr.update_browser_frame(img)
                                 # INCREMENT ONLY WHEN AN ACTUAL FRAME CROSSED BROWSER -> PYTHON BOUNDARY!
                                 st.session_state["python_real_frames_count"] += 1
 
