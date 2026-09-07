@@ -59,6 +59,65 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
         initial_sidebar_state="expanded"
     )
 
+    # ----------------------------------------------------
+    # GUARANTEED SYSTEM PIPELINE STATE DEFAULTS
+    # ----------------------------------------------------
+    if "python_real_frames_count" not in st.session_state:
+        st.session_state["python_real_frames_count"] = 0
+    if "last_processed_frame_ts" not in st.session_state:
+        st.session_state["last_processed_frame_ts"] = 0
+    if "last_frame_recv_time" not in st.session_state:
+        st.session_state["last_frame_recv_time"] = 0.0
+    if "yolo_inference_count" not in st.session_state:
+        st.session_state["yolo_inference_count"] = 0
+    if "last_yolo_inference_time" not in st.session_state:
+        st.session_state["last_yolo_inference_time"] = 0.0
+    if "yolo_engine_state" not in st.session_state:
+        st.session_state["yolo_engine_state"] = "WAITING FOR FRAMES"
+    if "tracking_engine_state" not in st.session_state:
+        st.session_state["tracking_engine_state"] = "WAITING FOR FRAMES"
+    if "latest_detection_results" not in st.session_state:
+        st.session_state["latest_detection_results"] = {
+            "target_cls": "NO TARGET DETECTED",
+            "confidence": None,
+            "track_id": None,
+            "bbox": [],
+            "target_x": 320.0,
+            "target_y": 240.0,
+            "error_x": 0.0,
+            "error_y": 0.0,
+            "latency_ms": 0.0,
+            "cell_phone_detected": False,
+            "cell_phone_conf": None,
+            "cell_phone_tid": None
+        }
+
+    # Initialize Real System Pipeline State Variables (Guaranteed defaults for all paths)
+    camera_state = "INITIALIZING"
+    camera_device_label = "LOCAL DEVICE CAMERA"
+    browser_video_state = "INITIALIZING"
+    frame_transport_status = "NO FRAMES RECEIVED"
+    cam_source = "LIVE LOCAL CAMERA"
+    yolo_state = "WAITING FOR FRAMES"
+    tracking_state = "WAITING"
+    target_cls = "NO TARGET DETECTED"
+    confidence = None
+    track_id = None
+    bbox = []
+    target_x, target_y = 320.0, 240.0
+    error_x, error_y = 0.0, 0.0
+    latency_ms = 0.0
+    cell_phone_detected = False
+    cell_phone_conf = None
+    cell_phone_tid = None
+    frame_count = 0
+    fps = 0.0
+    frame_width = 0
+    frame_height = 0
+    track_state = "live"
+    last_callback_error = "None"
+    last_recv_age = 999.0
+
     # Custom CSS for dark engineering styling
     st.markdown("""
         <style>
@@ -144,63 +203,6 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
     )
 
     demo_proxy_mode = st.checkbox("📱 Enable Demo Proxy Target Mode (Use Cell Phone / Object as Drone-Proxy Test)", value=True)
-
-    # Initialize Persistent Python Frame Transport & YOLO Session State
-    if "python_real_frames_count" not in st.session_state:
-        st.session_state["python_real_frames_count"] = 0
-    if "last_processed_frame_ts" not in st.session_state:
-        st.session_state["last_processed_frame_ts"] = 0
-    if "last_frame_recv_time" not in st.session_state:
-        st.session_state["last_frame_recv_time"] = 0.0
-    if "yolo_inference_count" not in st.session_state:
-        st.session_state["yolo_inference_count"] = 0
-    if "last_yolo_inference_time" not in st.session_state:
-        st.session_state["last_yolo_inference_time"] = 0.0
-    if "yolo_engine_state" not in st.session_state:
-        st.session_state["yolo_engine_state"] = "WAITING FOR FRAMES"
-    if "tracking_engine_state" not in st.session_state:
-        st.session_state["tracking_engine_state"] = "WAITING FOR FRAMES"
-    if "latest_detection_results" not in st.session_state:
-        st.session_state["latest_detection_results"] = {
-            "target_cls": "NO TARGET DETECTED",
-            "confidence": None,
-            "track_id": None,
-            "bbox": [],
-            "target_x": 320.0,
-            "target_y": 240.0,
-            "error_x": 0.0,
-            "error_y": 0.0,
-            "latency_ms": 0.0,
-            "cell_phone_detected": False,
-            "cell_phone_conf": None,
-            "cell_phone_tid": None
-        }
-
-    # Initialize Real System Pipeline State Variables (Guaranteed defaults for all paths)
-    camera_state = "INITIALIZING"
-    camera_device_label = "LOCAL DEVICE CAMERA"
-    browser_video_state = "INITIALIZING"
-    frame_transport_status = "NO FRAMES RECEIVED"
-    cam_source = "LIVE LOCAL CAMERA"
-    yolo_state = "WAITING FOR FRAMES"
-    tracking_state = "WAITING"
-    target_cls = "NO TARGET DETECTED"
-    confidence = None
-    track_id = None
-    bbox = []
-    target_x, target_y = 320.0, 240.0
-    error_x, error_y = 0.0, 0.0
-    latency_ms = 0.0
-    cell_phone_detected = False
-    cell_phone_conf = None
-    cell_phone_tid = None
-    frame_count = 0
-    fps = 0.0
-    frame_width = 0
-    frame_height = 0
-    track_state = "live"
-    last_callback_error = "None"
-    last_recv_age = 999.0
 
     # ----------------------------------------------------
     # 2. TARGET DETECTION & IDENTIFICATION
