@@ -337,6 +337,9 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
             elif "PERMISSION" in str(camera_status):
                 camera_state = "CAMERA PERMISSION DENIED"
                 browser_video_state = "STOPPED"
+            elif "IN USE" in str(camera_status):
+                camera_state = "CAMERA CURRENTLY IN USE"
+                browser_video_state = "IN USE"
             elif "NOT SUPPORTED" in str(camera_status):
                 camera_state = "CAMERA API NOT SUPPORTED"
                 browser_video_state = "ERROR"
