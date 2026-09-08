@@ -24,7 +24,7 @@ from hardware_interface import HardwareInterface
 from data_manager import SystemDataManager
 from detector import YOLO26nDetector
 from tracker import PersistentTracker
-from camera import filter_camera_devices, PHONE_KEYWORDS, LAPTOP_KEYWORDS
+from camera import CameraManager
 
 COMPONENT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "camera_component")
 device_camera_component = components.declare_component("device_camera", path=COMPONENT_DIR)
@@ -111,15 +111,16 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
     last_callback_error = "None"
     last_recv_age = 999.0
 
-    # Custom CSS for dark engineering styling
+    # Custom CSS for Indian SIH Engineering UI Styling (Saffron #FF9933 | White #FFFFFF | Green #138808 | Navy #000080)
     st.markdown("""
         <style>
-        .main { background-color: #0e1117; }
-        .stMetric { background-color: #1e222d; padding: 12px; border-radius: 8px; border: 1px solid #2d313e; }
-        .real-badge { background-color: #0e6251; color: #a3e4d7; padding: 4px 8px; border-radius: 4px; font-weight: bold; font-size: 0.85em; }
-        .sim-badge { background-color: #7d6608; color: #f9e79f; padding: 4px 8px; border-radius: 4px; font-weight: bold; font-size: 0.85em; }
-        .offline-badge { background-color: #641e16; color: #fadbd8; padding: 4px 8px; border-radius: 4px; font-weight: bold; font-size: 0.85em; }
-        .waiting-badge { background-color: #7d6608; color: #f9e79f; padding: 4px 8px; border-radius: 4px; font-weight: bold; font-size: 0.85em; }
+        .main { background-color: #0b1326; }
+        .stMetric { background-color: #151c2c; padding: 12px; border-radius: 8px; border: 1px solid #232f48; border-top: 3px solid #FF9933; }
+        .real-badge { background-color: #138808; color: #ffffff; padding: 4px 10px; border-radius: 4px; font-weight: bold; font-size: 0.85em; }
+        .sim-badge { background-color: #FF9933; color: #000000; padding: 4px 10px; border-radius: 4px; font-weight: bold; font-size: 0.85em; }
+        .offline-badge { background-color: #8b0000; color: #ffffff; padding: 4px 10px; border-radius: 4px; font-weight: bold; font-size: 0.85em; }
+        .waiting-badge { background-color: #b8860b; color: #ffffff; padding: 4px 10px; border-radius: 4px; font-weight: bold; font-size: 0.85em; }
+        .navy-badge { background-color: #000080; color: #ffffff; padding: 4px 10px; border-radius: 4px; font-weight: bold; font-size: 0.85em; }
         .alert-box { padding: 10px; border-radius: 6px; margin-bottom: 8px; }
         .alert-WARNING { background-color: #78281f; color: #fadbd8; border-left: 5px solid #e74c3c; }
         .alert-CRITICAL { background-color: #641e16; color: #f5b7b1; border-left: 5px solid #922b21; font-weight: bold; }
@@ -127,11 +128,30 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
         </style>
     """, unsafe_allow_html=True)
 
-    # Header
-    st.title("🎯 HIGH ALTITUDE EDGE AI SYSTEM")
-    st.caption("High Altitude Performance Optimization and Robust Design of Anti-Drone System | SIH Problem Statement 26050")
-    st.info("💡 **Objective**: Environmental compensation and robust precision tracking for reliable high-altitude operation.")
-    st.markdown("---")
+    # Indian SIH Engineering Tricolour Header Banner
+    st.markdown("""
+        <div style="background: linear-gradient(135deg, #0b1326 0%, #151c2c 100%); padding: 18px 24px; border-radius: 10px; border: 1px solid #232f48; border-top: 4px solid #FF9933; margin-bottom: 20px;">
+            <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px;">
+                <div>
+                    <h1 style="color: #ffffff; margin: 0; font-size: 1.8em; font-weight: 700; display: flex; align-items: center; gap: 10px;">
+                        🇮🇳 INDIA | SIH PROBLEM STATEMENT 26050
+                    </h1>
+                    <h3 style="color: #FF9933; margin: 4px 0 0 0; font-size: 1.15em; font-weight: 600;">
+                        HIGH ALTITUDE PERFORMANCE OPTIMIZATION & ROBUST ANTI-DRONE SYSTEM
+                    </h3>
+                    <p style="color: #cbd5e1; margin: 6px 0 0 0; font-size: 0.9em;">
+                        Academic Engineering Prototype & Environmental Compensation Control Dashboard
+                    </p>
+                </div>
+                <div style="text-align: right;">
+                    <span style="background-color: #000080; color: #ffffff; padding: 6px 14px; border-radius: 20px; font-weight: bold; font-size: 0.85em; border: 1px solid #FF9933;">
+                        ⚙️ DEFENCE TECH INDIA
+                    </span>
+                </div>
+            </div>
+            <div style="height: 3px; background: linear-gradient(to right, #FF9933 33%, #FFFFFF 33%, #FFFFFF 66%, #138808 66%); margin-top: 14px; border-radius: 2px;"></div>
+        </div>
+    """, unsafe_allow_html=True)
 
     # Read current Wokwi state (strictly driven by real MQTT heartbeat)
     hw_state = hw_interface.get_state()
