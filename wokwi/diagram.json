@@ -65,6 +65,13 @@
       "top": -260,
       "left": 100,
       "attrs": { "label": "Tilt Servo (GPIO 27)" }
+    },
+    {
+      "type": "wokwi-buzzer",
+      "id": "buzzer",
+      "top": -260,
+      "left": 240,
+      "attrs": { "label": "Alarm Buzzer (GPIO 25)" }
     }
   ],
   "connections": [
@@ -100,6 +107,9 @@
 
     [ "esp:GND.1", "tilt_servo:GND", "black", [ "v0" ] ],
     [ "esp:5V", "tilt_servo:V+", "red", [ "v0" ] ],
-    [ "esp:27", "tilt_servo:PWM", "orange", [ "v0" ] ]
+    [ "esp:27", "tilt_servo:PWM", "orange", [ "v0" ] ],
+
+    [ "esp:GND.1", "buzzer:GND", "black", [ "v0" ] ],
+    [ "esp:25", "buzzer:1", "red", [ "v0" ] ]
   ]
 }

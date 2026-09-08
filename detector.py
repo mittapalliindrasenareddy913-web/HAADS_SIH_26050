@@ -5,11 +5,19 @@ Supports model auto-download, custom drone model override, and graceful fallback
 """
 
 import os
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+os.environ["NUMEXPR_NUM_THREADS"] = "1"
+
 import sys
 import time
 import numpy as np
 
 try:
+    import torch
+    torch.set_num_threads(1)
     from ultralytics import YOLO
     ULTRALYTICS_AVAILABLE = True
 except ImportError:
@@ -17,7 +25,7 @@ except ImportError:
 
 
 class YOLO26nDetector:
-    def __init__(self, model_name="yolo26n", custom_weights_path=None, conf_threshold=0.35):
+    def __init__(self, model_name="yolo26n", custom_weights_path=None, conf_threshold=0.15):
         self.model_name = "YOLO26n Edge AI — Object Detection & Tracking"
         self.conf_threshold = conf_threshold
         self.model = None
@@ -64,7 +72,7 @@ class YOLO26nDetector:
             self.error_message = f"Error loading YOLO26n model: {str(e)}"
             self.model_loaded = False
 
-    def detect(self, frame):
+    def detect(self, frame, conf_threshold=None):
         """
         Runs object detection on a frame (BGR numpy array).
         Returns:
@@ -78,6 +86,7 @@ class YOLO26nDetector:
         """
         t0 = time.time()
         detections = []
+        active_conf = conf_threshold if conf_threshold is not None else self.conf_threshold
 
         if not self.model_loaded or self.model is None:
             # Simulated dummy detection if model is still loading or unavailable
@@ -85,7 +94,7 @@ class YOLO26nDetector:
             return detections
 
         try:
-            results = self.model(frame, verbose=False, conf=self.conf_threshold)[0]
+            results = self.model(frame, verbose=False, conf=active_conf)[0]
             
             for box in results.boxes:
                 xyxy = box.xyxy[0].cpu().numpy()
@@ -114,3 +123,14 @@ class YOLO26nDetector:
 
         self.last_inference_time_ms = (time.time() - t0) * 1000
         return detections
+
+    def supports_drone_class(self):
+        """
+        Inspects model class names dictionary to determine if a genuine drone/uav class exists.
+        Returns True ONLY if the model class list contains 'drone', 'uav', or 'quadcopter'.
+        """
+        if not self.model_loaded or self.model is None or not hasattr(self.model, "names"):
+            return False
+        names_lower = [str(n).lower() for n in self.model.names.values()]
+        return any(c in names_lower for c in ["drone", "uav", "quadcopter"])
+

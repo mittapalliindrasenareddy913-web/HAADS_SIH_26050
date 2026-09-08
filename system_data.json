@@ -1,28 +1,38 @@
 {
-  "timestamp": "2026-09-07 20:28:55",
+  "timestamp": "2026-09-08 17:23:12",
   "camera": {
     "status": "ONLINE",
-    "device_label": "Integrated Camera (04f2:b6d9)",
-    "fps": 0.0
+    "device_label": "Integrated Webcam (0bda:5551)",
+    "fps": 0.8,
+    "source": "LIVE LOCAL CAMERA",
+    "frames_received": 95
   },
   "detection": {
     "model_name": "YOLO26n Edge AI \u2014 Object Detection & Tracking",
-    "object_count": 1
+    "target_class": "person",
+    "confidence": 0.877,
+    "bbox": [
+      234.0,
+      314.0,
+      481.2,
+      479.6
+    ],
+    "track_id": 1
   },
   "tracking": {
-    "target_x": 175.0,
-    "target_y": 250.0,
-    "error_x": -145.0,
-    "error_y": 10.0
+    "target_x": 357.6,
+    "target_y": 396.8,
+    "error_x": 37.60000000000002,
+    "error_y": 156.8
   },
   "environment": {
-    "temperature": -20.0,
-    "pressure": 600.0,
-    "wind_speed": 40.0,
-    "vibration": "HIGH",
-    "air_density_kg_m3": 0.8257,
+    "temperature": 20.0,
+    "pressure": 950.0,
+    "wind_speed": 5.0,
+    "vibration": "LOW",
+    "air_density_kg_m3": 1.1289,
     "source": "SOFTWARE_SIMULATION",
-    "active_scenario": "COMBINED HIGH-ALTITUDE STRESS",
+    "active_scenario": "MODE 1 \u2014 NORMAL",
     "label": "SIMULATED ENVIRONMENT"
   },
   "compensation": {
@@ -34,105 +44,79 @@
       "vibration": true
     },
     "metrics": {
-      "temp_stiffness_factor": 1.5,
-      "sensor_drift_deg_s": 1.67,
-      "aerodynamic_drag_n": 2.5485,
-      "wind_deflection_px": 10.0,
-      "vibration_multiplier": 1.8,
-      "pressure_damping_ratio": 0.592,
-      "adaptive_stabilization_gain": 0.2,
-      "estimated_motor_load_pct": 70.0,
-      "pan_correction_deg": -27.0,
-      "tilt_correction_deg": 2.0
+      "temp_stiffness_factor": 1.0,
+      "sensor_drift_deg_s": 0.0,
+      "aerodynamic_drag_n": 0.0544,
+      "wind_deflection_px": 1.2,
+      "vibration_multiplier": 1.0,
+      "pressure_damping_ratio": 0.938,
+      "adaptive_stabilization_gain": 0.1612,
+      "estimated_motor_load_pct": 23.8,
+      "pan_correction_deg": 6.26,
+      "tilt_correction_deg": 25.28
     }
   },
   "performance": {
     "label": "SIMULATED PERFORMANCE ESTIMATE",
     "uncompensated": {
-      "detection": 75.1,
-      "tracking": 52.8,
-      "stabilization": 32.8,
-      "overall": 50.4
+      "detection": 98.0,
+      "tracking": 78.8,
+      "stabilization": 92.4,
+      "overall": 89.0
     },
     "compensated": {
-      "detection": 90.5,
-      "tracking": 80.1,
-      "stabilization": 78.2,
-      "overall": 81.9
+      "detection": 98.0,
+      "tracking": 88.3,
+      "stabilization": 96.2,
+      "overall": 93.9
     },
-    "overall_improvement_pct": 31.6
+    "overall_improvement_pct": 4.9
   },
   "health": {
-    "overall_health_pct": 100,
+    "overall_health_pct": 90,
     "subsystems": {
       "camera": "ONLINE",
       "ai_detector": "ACTIVE",
       "tracking": "ACTIVE",
       "environment": "ACTIVE",
-      "mpu6050": "ONLINE",
-      "bme280": "ONLINE",
+      "mpu6050": "NOT CONNECTED",
+      "bme280": "NOT CONNECTED",
       "compensation": "ACTIVE",
-      "servos": "ONLINE",
-      "communication": "CONNECTED"
+      "servos": "NOT CONNECTED",
+      "communication": "NOT CONNECTED"
     },
     "alerts": [
       {
-        "level": "WARNING",
-        "code": "EXTREME_COLD",
-        "message": "Sub-zero extreme cold (-20.0\u00b0C). Mechanical stiffness compensation active."
-      },
-      {
-        "level": "WARNING",
-        "code": "EXTREME_WIND",
-        "message": "Extreme wind force detected (40.0 km/h). Aerodynamic drag compensation active."
-      },
-      {
-        "level": "CRITICAL",
-        "code": "EXTREME_COMBINED_HAZARD",
-        "message": "Critical severe high-altitude hazard! Extreme cold combined with high wind shear."
-      },
-      {
-        "level": "WARNING",
-        "code": "HIGH_VIBRATION",
-        "message": "High structural vibration detected. High-frequency filtering active."
+        "level": "INFO",
+        "code": "WOKWI_OFFLINE",
+        "message": "Wokwi simulation is not running or no telemetry heartbeat has been received. Software simulation fallback is active."
       }
     ],
-    "timestamp": "2026-09-07 20:28:55"
+    "timestamp": "2026-09-08 17:23:12"
   },
   "hardware": {
-    "state": "WOKWI_ONLINE",
-    "is_connected": true,
-    "connection_status": "WOKWI HARDWARE LINK: ONLINE",
-    "python_link_status": "PYTHON HARDWARE LINK: CONNECTED",
-    "active_control_mode": "ACTIVE CONTROL MODE: LIVE WOKWI",
-    "source": "WOKWI",
-    "last_heartbeat_age_sec": 0.0,
-    "mqtt_connection_status": "CONNECTING...",
+    "state": "WOKWI_OFFLINE",
+    "is_connected": false,
+    "connection_status": "WOKWI HARDWARE LINK: OFFLINE",
+    "python_link_status": "PYTHON HARDWARE LINK: NOT CONNECTED",
+    "active_control_mode": "SOFTWARE SIMULATION FALLBACK",
+    "source": "SOFTWARE_SIMULATION",
+    "last_heartbeat_age_sec": null,
+    "mqtt_connection_status": "CONNECTED",
     "mqtt_connection_error": null,
-    "mqtt_message_count": 1,
-    "mqtt_last_payload": {
-      "device": "wokwi-esp32",
-      "status": "online",
-      "temperature": -20.0,
-      "pressure": 600.0,
-      "wind": 40.0,
-      "vibration": 0.5,
-      "pan": 95,
-      "tilt": 85,
-      "timestamp": 1788793135.5104778
-    },
-    "pan_angle": 95,
-    "tilt_angle": 85,
+    "mqtt_message_count": 0,
+    "mqtt_last_payload": null,
+    "pan_angle": 96,
+    "tilt_angle": 115,
     "telemetry": {
       "device": "wokwi-esp32",
-      "temperature": -20.0,
-      "pressure": 600.0,
-      "wind": 40.0,
-      "vibration": 0.5,
-      "pan": 95,
-      "tilt": 85,
-      "timestamp": 1788793135.5104778,
-      "status": "online"
+      "temperature": 20.0,
+      "pressure": 950.0,
+      "wind": 5.0,
+      "vibration": 0.1,
+      "pan": 90,
+      "tilt": 90,
+      "timestamp": 0
     }
   }
 }

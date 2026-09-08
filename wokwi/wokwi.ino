@@ -20,10 +20,13 @@
 // WiFi & MQTT Configuration
 const char* ssid = "Wokwi-GUEST";
 const char* password = "";
-const char* mqtt_server = "broker.hivemq.com";
+const char* mqtt_servers[] = {"test.mosquitto.org", "broker.emqx.io", "broker.hivemq.com"};
+const int num_brokers = 3;
+int current_broker_idx = 0;
 const int mqtt_port = 1883;
 const char* mqtt_topic_telemetry = "isr/sih/26050/telemetry";
 const char* mqtt_topic_servo = "isr/sih/26050/servo";
+const char* mqtt_topic_buzzer = "isr/sih/26050/buzzer";
 
 WiFiClient espClient;
 PubSubClient mqttClient(espClient);
@@ -36,6 +39,7 @@ PubSubClient mqttClient(espClient);
 
 #define SERVO_PAN_PIN     26
 #define SERVO_TILT_PIN    27
+#define BUZZER_PIN        25
 
 // Sensor & Servo Objects
 Adafruit_MPU6050 mpu;
@@ -45,6 +49,7 @@ Servo tiltServo;
 
 bool mpuOK = false;
 bool bmeOK = false;
+bool buzzer_active = false;
 
 // Telemetry State Variables
 float sim_temperature = 20.0;
@@ -78,6 +83,15 @@ void callback(char* topic, byte* payload, unsigned int length) {
       Serial.print(" | Tilt: ");
       Serial.println(tilt_angle);
     }
+  } else if (message == "BUZZER:ON" || message == "BUZZER_ON") {
+    buzzer_active = true;
+    tone(BUZZER_PIN, 2000); // 2000Hz Alarm Tone
+    Serial.println("[ESP32] 🚨 BUZZER_ALARM -> SOUND ON (2000Hz Tone Active)");
+  } else if (message == "BUZZER:OFF" || message == "BUZZER_OFF") {
+    buzzer_active = false;
+    noTone(BUZZER_PIN);
+    digitalWrite(BUZZER_PIN, LOW);
+    Serial.println("[ESP32] 🔇 BUZZER_ALARM -> SOUND OFF");
   }
 }
 
@@ -110,8 +124,10 @@ void reconnectMQTT() {
   if (WiFi.status() != WL_CONNECTED) return;
   
   if (!mqttClient.connected()) {
+    const char* target_server = mqtt_servers[current_broker_idx];
+    mqttClient.setServer(target_server, mqtt_port);
     Serial.print("[ESP32] MQTT_CONNECTING to ");
-    Serial.print(mqtt_server);
+    Serial.print(target_server);
     Serial.print(":");
     Serial.print(mqtt_port);
     Serial.println("...");
@@ -122,11 +138,15 @@ void reconnectMQTT() {
     if (mqttClient.connect(clientId.c_str())) {
       Serial.println("[ESP32] MQTT_CONNECTED");
       mqttClient.subscribe(mqtt_topic_servo);
+      mqttClient.subscribe(mqtt_topic_buzzer);
       Serial.print("[ESP32] MQTT_SUBSCRIBED to ");
-      Serial.println(mqtt_topic_servo);
+      Serial.print(mqtt_topic_servo);
+      Serial.print(" & ");
+      Serial.println(mqtt_topic_buzzer);
     } else {
       Serial.print("[ESP32] MQTT_CONNECT_FAILED | Code: ");
       Serial.println(mqttClient.state());
+      current_broker_idx = (current_broker_idx + 1) % num_brokers;
     }
   }
 }
@@ -174,9 +194,10 @@ void setup() {
   pinMode(POT_PRESS_PIN, INPUT);
   pinMode(POT_WIND_PIN, INPUT);
   pinMode(POT_VIB_PIN, INPUT);
+  pinMode(BUZZER_PIN, OUTPUT);
+  digitalWrite(BUZZER_PIN, LOW);
 
   setupWiFi();
-  mqttClient.setServer(mqtt_server, mqtt_port);
   mqttClient.setCallback(callback);
 }
 
@@ -244,6 +265,7 @@ void loop() {
     jsonPayload += "\"vibration_val\":" + String(sim_vibration, 2) + ",";
     jsonPayload += "\"pan\":" + String(pan_angle) + ",";
     jsonPayload += "\"tilt\":" + String(tilt_angle) + ",";
+    jsonPayload += "\"buzzer\":" + String(buzzer_active ? "true" : "false") + ",";
     jsonPayload += "\"timestamp\":" + String(millis());
     jsonPayload += "}";
 

@@ -42,7 +42,7 @@ _GLOBAL_LAST_TELEMETRY = {
 }
 
 
-def _ensure_mqtt_singleton(broker="broker.hivemq.com", port=1883, topic="isr/sih/26050/telemetry"):
+def _ensure_mqtt_singleton(broker="test.mosquitto.org", port=1883, topic="isr/sih/26050/telemetry"):
     global _GLOBAL_MQTT_CLIENT, _GLOBAL_MQTT_CONN_STATUS, _GLOBAL_MQTT_CONN_ERROR
     with _GLOBAL_MQTT_LOCK:
         if _GLOBAL_MQTT_CLIENT is None and MQTT_AVAILABLE:
@@ -53,16 +53,16 @@ def _ensure_mqtt_singleton(broker="broker.hivemq.com", port=1883, topic="isr/sih
                     _GLOBAL_MQTT_CONN_ERROR = None
                     try:
                         client.subscribe(topic)
-                        print(f"[HardwareInterface] Persistent MQTT Client Subscribed to '{topic}'.")
+                        print(f"[HardwareInterface] Persistent MQTT Client Subscribed to '{topic}' on {broker}.")
                     except Exception as e:
                         print(f"[HardwareInterface] Subscribe note: {e}")
                 else:
                     _GLOBAL_MQTT_CONN_STATUS = f"DISCONNECTED (RC={rc})"
                     _GLOBAL_MQTT_CONN_ERROR = f"Connect failed with code {rc}"
 
-            def on_disconnect(client, userdata, rc, properties=None):
+            def on_disconnect(client, userdata, *args, **kwargs):
                 global _GLOBAL_MQTT_CONN_STATUS
-                _GLOBAL_MQTT_CONN_STATUS = f"DISCONNECTED (Code={rc})"
+                _GLOBAL_MQTT_CONN_STATUS = "DISCONNECTED"
 
             def on_message(client, userdata, msg):
                 global _GLOBAL_LAST_HEARTBEAT_TIME, _GLOBAL_MQTT_MESSAGE_COUNT, _GLOBAL_LAST_PAYLOAD
@@ -84,38 +84,44 @@ def _ensure_mqtt_singleton(broker="broker.hivemq.com", port=1883, topic="isr/sih
                 except Exception as e:
                     pass
 
-            try:
-                _GLOBAL_MQTT_CONN_STATUS = "CONNECTING..."
-                client = mqtt.Client(
-                    mqtt.CallbackAPIVersion.VERSION2 if hasattr(mqtt, "CallbackAPIVersion") else None,
-                    client_id=f"HAADS-Python-{int(time.time())}"
-                )
-                client.on_connect = on_connect
-                client.on_disconnect = on_disconnect
-                client.on_message = on_message
-                client.connect_async(broker, port, keepalive=30)
-                client.loop_start()
-                _GLOBAL_MQTT_CLIENT = client
-                print(f"[HardwareInterface] Started persistent MQTT background loop on {broker}:{port}.")
-            except Exception as e:
-                _GLOBAL_MQTT_CONN_STATUS = "ERROR"
-                _GLOBAL_MQTT_CONN_ERROR = str(e)
-                print(f"[HardwareInterface] Persistent MQTT setup note: {e}")
+            brokers_to_try = [broker, "broker.hivemq.com", "broker.emqx.io"]
+            for b in brokers_to_try:
+                try:
+                    _GLOBAL_MQTT_CONN_STATUS = f"CONNECTING to {b}..."
+                    client = mqtt.Client(
+                        mqtt.CallbackAPIVersion.VERSION2 if hasattr(mqtt, "CallbackAPIVersion") else None,
+                        client_id=f"HAADS-Python-{int(time.time())}"
+                    )
+                    client.on_connect = on_connect
+                    client.on_disconnect = on_disconnect
+                    client.on_message = on_message
+                    client.connect(b, port, keepalive=30)
+                    client.loop_start()
+                    _GLOBAL_MQTT_CLIENT = client
+                    _GLOBAL_MQTT_CONN_STATUS = f"CONNECTED ({b})"
+                    print(f"[HardwareInterface] Started persistent MQTT background loop on {b}:{port}.")
+                    break
+                except Exception as e:
+                    _GLOBAL_MQTT_CONN_STATUS = "ERROR"
+                    _GLOBAL_MQTT_CONN_ERROR = str(e)
+                    print(f"[HardwareInterface] MQTT connect note for {b}: {e}")
 
     return _GLOBAL_MQTT_CLIENT
 
 
 class HardwareInterface:
-    def __init__(self, mode="AUTO", mqtt_broker="broker.hivemq.com", mqtt_port=1883):
+    def __init__(self, mode="AUTO", mqtt_broker="test.mosquitto.org", mqtt_port=1883):
         self.mode = mode
         self.mqtt_broker = mqtt_broker
         self.mqtt_port = mqtt_port
         self.mqtt_topic_telemetry = "isr/sih/26050/telemetry"
         self.mqtt_topic_servo = "isr/sih/26050/servo"
+        self.mqtt_topic_buzzer = "isr/sih/26050/buzzer"
 
         # Actuator State Cache
         self.pan_angle = 90
         self.tilt_angle = 90
+        self.buzzer_active = False
 
         # Ensure singleton MQTT background client is active
         _ensure_mqtt_singleton(self.mqtt_broker, self.mqtt_port, self.mqtt_topic_telemetry)
@@ -266,3 +272,13 @@ class HardwareInterface:
         state_info["pan_angle"] = self.pan_angle
         state_info["tilt_angle"] = self.tilt_angle
         return state_info
+
+    def send_buzzer_command(self, active: bool):
+        self.buzzer_active = active
+        cmd = "BUZZER:ON" if active else "BUZZER:OFF"
+        if _GLOBAL_MQTT_CLIENT and hasattr(_GLOBAL_MQTT_CLIENT, 'is_connected') and _GLOBAL_MQTT_CLIENT.is_connected():
+            try:
+                _GLOBAL_MQTT_CLIENT.publish(self.mqtt_topic_buzzer, cmd)
+            except Exception:
+                pass
+        return active

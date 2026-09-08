@@ -7,6 +7,12 @@ and Wokwi hardware interface abstraction.
 
 import sys
 import os
+
+# Prevent OpenBLAS / PyTorch / OpenCV thread allocation errors
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+
 import streamlit as st
 
 # Add project root directory to path
@@ -22,6 +28,7 @@ from performance import PerformanceEngine
 from health_monitor import HealthMonitor
 from hardware_interface import HardwareInterface
 from data_manager import SystemDataManager
+from snapshot_manager import SnapshotManager
 from dashboard import render_dashboard
 
 
@@ -70,6 +77,8 @@ def main():
         st.session_state["hw_interface"] = HardwareInterface(mode="WOKWI")
     if "data_mgr" not in st.session_state:
         st.session_state["data_mgr"] = SystemDataManager()
+    if "snapshot_mgr" not in st.session_state:
+        st.session_state["snapshot_mgr"] = SnapshotManager()
 
     render_dashboard(
         camera_mgr,
@@ -80,7 +89,8 @@ def main():
         st.session_state["perf_engine"],
         st.session_state["health_mon"],
         st.session_state["hw_interface"],
-        st.session_state["data_mgr"]
+        st.session_state["data_mgr"],
+        st.session_state["snapshot_mgr"]
     )
 
 

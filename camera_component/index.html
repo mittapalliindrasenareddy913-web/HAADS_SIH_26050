@@ -159,16 +159,69 @@
             setStreamlitHeight();
         }
 
+        function captureAndSendFrame() {
+            if (!currentStream) return;
+            const activeTrack = currentStream.getVideoTracks()[0];
+            if (!activeTrack || activeTrack.readyState !== 'live') return;
+
+            const vWidth = video.videoWidth || 640;
+            const vHeight = video.videoHeight || 480;
+
+            frameCount++;
+            canvas.width = 640;
+            canvas.height = 480;
+            ctx.drawImage(video, 0, 0, 640, 480);
+            const dataUrl = canvas.toDataURL('image/jpeg', 0.65);
+
+            const devLabel = activeTrack.label || 'LOCAL DEVICE CAMERA';
+            deviceTitle.textContent = '📷 ' + devLabel.toUpperCase();
+            statusBadge.className = 'badge badge-online';
+            statusBadge.textContent = '🟢 CAMERA ONLINE';
+            errorContainer.style.display = 'none';
+            video.style.display = 'block';
+
+            sendToStreamlit({
+                status: 'ONLINE',
+                error: null,
+                frame: dataUrl,
+                width: vWidth,
+                height: vHeight,
+                client_frame_count: frameCount,
+                video_ready_state: video.readyState,
+                video_paused: video.paused,
+                video_playing: !video.paused && !video.ended,
+                src_object_exists: true,
+                track_state: activeTrack.readyState,
+                device_label: devLabel,
+                timestamp: Date.now()
+            });
+            setStreamlitHeight();
+        }
+
         async function initCamera() {
-            // Guarantee EXACTLY ONE initialization execution path
             if (isInitializing || hasInitialized) {
-                return;
-            }
-            if (currentStream && currentStream.active) {
                 return;
             }
 
             isInitializing = true;
+            statusBadge.className = 'badge badge-requesting';
+            statusBadge.textContent = '🟡 INITIALIZING CAMERA...';
+
+            sendToStreamlit({
+                status: 'INITIALIZING',
+                error: null,
+                frame: null,
+                width: 0,
+                height: 0,
+                client_frame_count: 0,
+                video_ready_state: 0,
+                video_paused: true,
+                video_playing: false,
+                src_object_exists: false,
+                track_state: 'INITIALIZING',
+                device_label: 'LOCAL DEVICE CAMERA',
+                timestamp: Date.now()
+            });
 
             if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
                 isInitializing = false;
@@ -180,14 +233,12 @@
 
             let stream = null;
             try {
-                // Primary constraint: facingMode preference for mobile / laptop local camera
                 stream = await navigator.mediaDevices.getUserMedia({
                     video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: "user" },
                     audio: false
                 });
             } catch(e1) {
                 try {
-                    // Fallback constraint: video: true
                     stream = await navigator.mediaDevices.getUserMedia({
                         video: true,
                         audio: false
@@ -210,6 +261,7 @@
 
             currentStream = stream;
             video.srcObject = stream;
+            video.muted = true;
 
             try {
                 await video.play();
@@ -225,45 +277,19 @@
             hasInitialized = true;
             isInitializing = false;
 
-            const devLabel = track.label || 'LOCAL DEVICE CAMERA';
-            deviceTitle.textContent = '📷 ' + devLabel.toUpperCase();
+            // Immediate initial capture & send
+            captureAndSendFrame();
 
-            statusBadge.className = 'badge badge-online';
-            statusBadge.textContent = '🟢 CAMERA ONLINE';
-            errorContainer.style.display = 'none';
-            video.style.display = 'block';
-            setStreamlitHeight();
-
-            // Stream frames to Python @ ~6 FPS (160ms interval)
+            // Stream frames at ~4 FPS (250ms interval) to avoid WebSocket message congestion
             if (captureInterval) clearInterval(captureInterval);
-            captureInterval = setInterval(() => {
-                if (video.readyState >= 2 && video.videoWidth > 0 && !video.paused) {
-                    frameCount++;
-                    canvas.width = 640;
-                    canvas.height = 480;
-                    ctx.drawImage(video, 0, 0, 640, 480);
-                    const dataUrl = canvas.toDataURL('image/jpeg', 0.65);
-
-                    const activeTrack = (video.srcObject && video.srcObject.getVideoTracks) ? video.srcObject.getVideoTracks()[0] : null;
-
-                    sendToStreamlit({
-                        status: 'ONLINE',
-                        error: null,
-                        frame: dataUrl,
-                        width: video.videoWidth,
-                        height: video.videoHeight,
-                        client_frame_count: frameCount,
-                        video_ready_state: video.readyState,
-                        video_paused: video.paused,
-                        video_playing: !video.paused && !video.ended,
-                        src_object_exists: !!video.srcObject,
-                        track_state: activeTrack ? activeTrack.readyState : 'NO_TRACK',
-                        device_label: devLabel,
-                        timestamp: Date.now()
-                    });
-                }
-            }, 160);
+            captureInterval = setInterval(captureAndSendFrame, 250);
         }
+
+        // Attach video ready event listeners for immediate updates
+        video.addEventListener('loadedmetadata', captureAndSendFrame);
+        video.addEventListener('loadeddata', captureAndSendFrame);
+        video.addEventListener('canplay', captureAndSendFrame);
+        video.addEventListener('playing', captureAndSendFrame);
 
         // Streamlit Component Handlers
         window.addEventListener("message", function(event) {
@@ -274,10 +300,12 @@
                     readyInterval = null;
                 }
                 setStreamlitHeight();
+                if (currentStream && video.readyState >= 1) {
+                    captureAndSendFrame();
+                }
             }
         });
 
-        // Send ready event & retry every 500ms until Streamlit acknowledges render
         notifyReady();
         setStreamlitHeight();
         readyInterval = setInterval(function() {
@@ -287,7 +315,6 @@
             }
         }, 500);
 
-        // Execute camera initialization ONCE on script load
         initCamera();
     })();
     </script>

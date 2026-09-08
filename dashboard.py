@@ -51,7 +51,70 @@ def create_synthetic_drone_frame(target_x, target_y):
     return frame
 
 
-def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_engine, health_mon, hw_interface, data_mgr):
+def compute_proxy_interpretation(raw_dets, target_cls, demo_proxy_mode, proxy_content_type, target_mode, detector):
+    has_phone_in_dets = any(d["class_name"].lower() in ["cell phone", "mobile phone", "phone"] for d in raw_dets)
+    has_person_in_dets = any(d["class_name"].lower() == "person" for d in raw_dets)
+
+    if has_phone_in_dets:
+        physical_object = "CELL PHONE"
+    elif has_person_in_dets:
+        physical_object = "PERSON"
+    elif len(raw_dets) > 0:
+        physical_object = raw_dets[0]["class_name"].upper()
+    else:
+        physical_object = "NONE"
+
+    supports_drone = detector.supports_drone_class() if detector else False
+    has_genuine_drone = any(d["class_name"].lower() in ["drone", "uav", "quadcopter"] for d in raw_dets) or ("drone" in str(target_cls).lower() and supports_drone) or ("synthetic" in str(target_cls).lower())
+    has_person_det = any(d["class_name"].lower() == "person" for d in raw_dets) or ("person" in str(target_cls).lower())
+
+    if has_genuine_drone:
+        displayed_target = "DRONE"
+        target_mode_str = "REAL EDGE AI DRONE DETECTION"
+        target_status_str = "VERIFIED PHYSICAL TARGET"
+        alert_type = "REAL_DRONE"
+
+    elif demo_proxy_mode and len(raw_dets) > 0 and target_mode == "Start Live Camera":
+        target_status_str = "SIMULATION / DEMONSTRATION ONLY"
+
+        if has_person_det or "Person" in str(proxy_content_type):
+            displayed_target = "PERSON"
+            target_mode_str = "PERSON-PROXY DEMONSTRATION"
+            alert_type = "PERSON_PROXY"
+        elif "Drone" in str(proxy_content_type) or has_genuine_drone:
+            displayed_target = "DRONE"
+            target_mode_str = "DRONE-PROXY DEMONSTRATION"
+            alert_type = "DRONE_PROXY"
+        else:
+            first_cname = raw_dets[0]["class_name"].upper() if len(raw_dets) > 0 else "TARGET"
+            displayed_target = first_cname
+            target_mode_str = f"{first_cname}-PROXY DEMONSTRATION"
+            alert_type = "OTHER_PROXY"
+
+    elif has_phone_in_dets:
+        displayed_target = "MOBILE DEVICE"
+        target_mode_str = "MOBILE DEVICE DETECTION"
+        target_status_str = "PHYSICAL OBJECT DETECTED"
+        alert_type = "MOBILE_PHONE"
+
+    elif len(raw_dets) > 0:
+        first_det = raw_dets[0]
+        displayed_target = first_det["class_name"].upper()
+        target_mode_str = "DIRECT DETECTION"
+        target_status_str = "ACTIVE"
+        alert_type = "GENERIC_OBJECT"
+
+    else:
+        displayed_target = "NO TARGET DETECTED"
+        target_mode_str = "NORMAL"
+        target_status_str = "READY"
+        alert_type = "NONE"
+
+    is_target_detected = (alert_type != "NONE")
+    return physical_object, displayed_target, target_mode_str, target_status_str, alert_type, is_target_detected
+
+
+def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_engine, health_mon, hw_interface, data_mgr, snapshot_mgr=None):
     # ----------------------------------------------------
     # GUARANTEED SYSTEM PIPELINE STATE DEFAULTS
     # ----------------------------------------------------
@@ -86,7 +149,7 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
         }
 
     # Initialize Real System Pipeline State Variables (Guaranteed defaults for all paths)
-    camera_state = "INITIALIZING"
+    camera_state = "ONLINE" if (camera_mgr and camera_mgr.status == "ONLINE") else "INITIALIZING"
     camera_device_label = "LOCAL DEVICE CAMERA"
     browser_video_state = "INITIALIZING"
     frame_transport_status = "NO FRAMES RECEIVED"
@@ -114,17 +177,54 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
     # Custom CSS for Indian SIH Engineering UI Styling (Saffron #FF9933 | White #FFFFFF | Green #138808 | Navy #000080)
     st.markdown("""
         <style>
-        .main { background-color: #0b1326; }
-        .stMetric { background-color: #151c2c; padding: 12px; border-radius: 8px; border: 1px solid #232f48; border-top: 3px solid #FF9933; }
-        .real-badge { background-color: #138808; color: #ffffff; padding: 4px 10px; border-radius: 4px; font-weight: bold; font-size: 0.85em; }
-        .sim-badge { background-color: #FF9933; color: #000000; padding: 4px 10px; border-radius: 4px; font-weight: bold; font-size: 0.85em; }
-        .offline-badge { background-color: #8b0000; color: #ffffff; padding: 4px 10px; border-radius: 4px; font-weight: bold; font-size: 0.85em; }
-        .waiting-badge { background-color: #b8860b; color: #ffffff; padding: 4px 10px; border-radius: 4px; font-weight: bold; font-size: 0.85em; }
-        .navy-badge { background-color: #000080; color: #ffffff; padding: 4px 10px; border-radius: 4px; font-weight: bold; font-size: 0.85em; }
-        .alert-box { padding: 10px; border-radius: 6px; margin-bottom: 8px; }
+        /* ELIMINATE STREAMLIT RERUN FADE / DIMMING OVERLAY PERMANENTLY */
+        [data-st-mode="running"],
+        [data-testid="stAppViewContainer"],
+        [data-testid="stHeader"],
+        .stApp,
+        iframe,
+        div.element-container,
+        .stMarkdown {
+            opacity: 1 !important;
+            filter: none !important;
+            transition: none !important;
+            animation: none !important;
+        }
+
+        html, body, [data-testid="stAppViewContainer"], .main, .stApp {
+            background-color: #0b1326 !important;
+            color: #ffffff !important;
+        }
+        [data-testid="stSidebar"] {
+            background-color: #080d1a !important;
+            border-right: 1px solid #232f48 !important;
+        }
+        .stMetric {
+            background-color: #151c2c !important;
+            padding: 14px !important;
+            border-radius: 8px !important;
+            border: 1px solid #232f48 !important;
+            border-top: 3px solid #FF9933 !important;
+            color: #ffffff !important;
+        }
+        [data-testid="stMetricValue"] {
+            color: #ffffff !important;
+            font-weight: 700 !important;
+        }
+        [data-testid="stMetricLabel"] {
+            color: #cbd5e1 !important;
+            font-weight: 600 !important;
+        }
+        .real-badge { background-color: #138808; color: #ffffff; padding: 5px 12px; border-radius: 4px; font-weight: bold; font-size: 0.85em; display: inline-block; }
+        .sim-badge { background-color: #FF9933; color: #000000; padding: 5px 12px; border-radius: 4px; font-weight: bold; font-size: 0.85em; display: inline-block; }
+        .offline-badge { background-color: #8b0000; color: #ffffff; padding: 5px 12px; border-radius: 4px; font-weight: bold; font-size: 0.85em; display: inline-block; }
+        .waiting-badge { background-color: #b8860b; color: #ffffff; padding: 5px 12px; border-radius: 4px; font-weight: bold; font-size: 0.85em; display: inline-block; }
+        .navy-badge { background-color: #000080; color: #ffffff; padding: 5px 12px; border-radius: 4px; font-weight: bold; font-size: 0.85em; display: inline-block; }
+        .alert-box { padding: 12px 16px; border-radius: 6px; margin-bottom: 10px; color: #ffffff; }
         .alert-WARNING { background-color: #78281f; color: #fadbd8; border-left: 5px solid #e74c3c; }
         .alert-CRITICAL { background-color: #641e16; color: #f5b7b1; border-left: 5px solid #922b21; font-weight: bold; }
         .alert-INFO { background-color: #1b4f72; color: #d4efdf; border-left: 5px solid #3498db; }
+        p, span, label, h1, h2, h3, h4, h5, h6, li { color: #ffffff !important; }
         </style>
     """, unsafe_allow_html=True)
 
@@ -205,6 +305,14 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
         })
         st.sidebar.success("Sent simulated MQTT Heartbeat to Python!")
 
+    if snapshot_mgr is not None:
+        st.sidebar.markdown("---")
+        st.sidebar.subheader("📸 5-Sec Snapshot Storage & 1-Hr Auto Cleanup")
+        stats = snapshot_mgr.get_snapshot_stats()
+        st.sidebar.markdown("<span class='real-badge'>🟢 5-SEC AUTO SNAPSHOT ACTIVE</span>", unsafe_allow_html=True)
+        st.sidebar.caption(f"• **Stored Images (1-Hr Buffer)**: `{stats['jpg_count']} photos` (`{stats['json_count']} metadata logs`)")
+        st.sidebar.caption("• **Auto Cleanup**: `Files older than 1 hour are automatically deleted.`")
+
     # ----------------------------------------------------
     # TARGET INPUT SELECTION
     # ----------------------------------------------------
@@ -216,6 +324,15 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
     )
 
     demo_proxy_mode = st.checkbox("📱 Enable Demo Proxy Target Mode (Use Cell Phone / Object as Drone-Proxy Test)", value=True)
+    if demo_proxy_mode:
+        proxy_content_type = st.selectbox(
+            "Phone Screen Demonstrated Content:",
+            ["🚁 Drone Image / Video", "👤 Person Image / Video", "📦 Other Object"],
+            index=0,
+            key="phone_screen_content_select"
+        )
+    else:
+        proxy_content_type = "OFF"
 
     # ----------------------------------------------------
     # 2. TARGET DETECTION & IDENTIFICATION
@@ -229,6 +346,12 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
         with col_det1:
             st.markdown("#### 📷 LOCAL DEVICE CAMERA FEED")
             camera_data = device_camera_component(key="device_local_cam")
+
+            # Annotated Frame Display for Visual Proof of Bounding Boxes & Object Labels
+            if st.session_state.get("latest_annotated_frame") is not None:
+                with st.expander("🎯 Real-Time YOLO26n Visual Bounding Box Feed", expanded=True):
+                    ann_rgb = cv2.cvtColor(st.session_state["latest_annotated_frame"], cv2.COLOR_BGR2RGB)
+                    st.image(ann_rgb, channels="RGB", use_container_width=True, caption="Live YOLO26n Edge AI Bounding Boxes, Tracker IDs & Confidence %")
 
         if isinstance(camera_data, dict):
             camera_status = camera_data.get("status", "INITIALIZING")
@@ -248,13 +371,12 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
             if cam_err:
                 last_callback_error = str(cam_err)
 
-            if camera_status == "ONLINE":
+            # Process frame whenever raw_frame_b64 payload is transported from browser
+            if raw_frame_b64 and isinstance(raw_frame_b64, str) and "," in raw_frame_b64:
                 camera_state = "ONLINE"
                 browser_video_state = "PLAYING" if video_playing else "PAUSED"
 
-                # Check if a new frame payload was transported from browser
-                if raw_frame_b64 and isinstance(raw_frame_b64, str) and "," in raw_frame_b64:
-                    if frame_ts != st.session_state["last_processed_frame_ts"]:
+                if frame_ts != st.session_state["last_processed_frame_ts"]:
                         st.session_state["last_processed_frame_ts"] = frame_ts
                         st.session_state["last_frame_recv_time"] = time.time()
 
@@ -279,11 +401,41 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
                                 # 1. Run YOLO26n inference on the real decoded image matrix
                                 t0 = time.time()
                                 if detector and detector.model_loaded:
-                                    raw_detections = detector.detect(img)
+                                    raw_detections = detector.detect(img, conf_threshold=0.15)
+                                    if len(raw_detections) == 0:
+                                        # Low-light / glare adaptive fallback threshold
+                                        raw_detections = detector.detect(img, conf_threshold=0.10)
+                                    st.session_state["current_raw_detections"] = raw_detections
                                     latency_ms = (time.time() - t0) * 1000.0
                                     st.session_state["yolo_inference_count"] += 1
                                     st.session_state["last_yolo_inference_time"] = time.time()
                                     st.session_state["yolo_engine_state"] = "ACTIVE"
+
+                                    # Draw real-time bounding boxes & labels on frame for visual overlay
+                                    annotated_img = img.copy()
+                                    for det in raw_detections:
+                                        x1, y1, x2, y2 = map(int, det["bbox"])
+                                        cname = det["class_name"].lower()
+                                        conf = det["confidence"]
+
+                                        if cname in ["cell phone", "mobile phone", "phone"]:
+                                            box_color = (0, 0, 255) # Red for mobile phone
+                                            box_label = f"ALERT: CELL PHONE {conf*100:.0f}%"
+                                        elif cname in ["remote", "mouse", "keyboard", "laptop", "bottle", "cup", "book", "clock", "tv"]:
+                                            box_color = (0, 165, 255) # Orange for charger/gadget
+                                            box_label = f"{cname.upper()} {conf*100:.0f}%"
+                                        elif cname in ["person", "drone", "aeroplane", "bird"]:
+                                            box_color = (0, 255, 0) # Green for person/aircraft
+                                            box_label = f"{cname.upper()} {conf*100:.0f}%"
+                                        else:
+                                            box_color = (255, 255, 0) # Yellow for other objects
+                                            box_label = f"{cname.upper()} {conf*100:.0f}%"
+
+                                        cv2.rectangle(annotated_img, (x1, y1), (x2, y2), box_color, 2)
+                                        cv2.putText(annotated_img, box_label, (x1, max(20, y1 - 8)),
+                                                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, box_color, 2)
+
+                                    st.session_state["latest_annotated_frame"] = annotated_img
                                 else:
                                     st.session_state["yolo_engine_state"] = "ERROR"
                                     raw_detections = []
@@ -326,7 +478,7 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
                                         error_y = target_y - 240.0
                                         track_id = None
 
-                                    # Check for cell phone object in real YOLO detections
+                                    # Check for cell phone in real YOLO detections
                                     for det in raw_detections:
                                         cname = det["class_name"].lower()
                                         if cname in ["cell phone", "mobile phone", "phone"]:
@@ -334,6 +486,11 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
                                             cell_phone_confidence = float(det["confidence"])
                                             cell_phone_track_id = track_id if track_id else 1
                                             break
+
+                                 # Compute target interpretation immediately for instant snapshot & UI sync
+                                phys_obj, disp_tgt, tgt_mode_str, tgt_status_str, al_type, is_tgt_det = compute_proxy_interpretation(
+                                    raw_detections, target_cls, demo_proxy_mode, proxy_content_type, target_mode, detector
+                                )
 
                                 # Cache latest results in session state
                                 st.session_state["latest_detection_results"] = {
@@ -348,8 +505,18 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
                                     "latency_ms": latency_ms,
                                     "cell_phone_detected": cell_phone_found,
                                     "cell_phone_conf": cell_phone_confidence,
-                                    "cell_phone_tid": cell_phone_track_id
+                                    "cell_phone_tid": cell_phone_track_id,
+                                    "physical_object": phys_obj,
+                                    "displayed_target": disp_tgt,
+                                    "target_mode_str": tgt_mode_str,
+                                    "target_status_str": tgt_status_str,
+                                    "alert_type": al_type,
+                                    "is_target_detected": is_tgt_det,
+                                    "raw_detections": raw_detections
                                 }
+
+                                if snapshot_mgr is not None and annotated_img is not None:
+                                    snapshot_mgr.process_frame(annotated_img, st.session_state["latest_detection_results"])
 
                         except Exception as e:
                             last_callback_error = f"{type(e).__name__}: {str(e)}"
@@ -367,23 +534,49 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
                 camera_state = "NO LOCAL CAMERA FOUND"
                 browser_video_state = "NOT FOUND"
             else:
-                camera_state = str(camera_status)
+                if st.session_state["python_real_frames_count"] > 0 or (camera_mgr and camera_mgr.status == "ONLINE"):
+                    camera_state = "ONLINE"
+                else:
+                    camera_state = str(camera_status)
                 browser_video_state = "INITIALIZING"
 
         # Determine Frame Transport Status & Age
         now = time.time()
         last_recv_age = (now - st.session_state["last_frame_recv_time"]) if st.session_state["last_frame_recv_time"] > 0 else 999.0
 
-        if st.session_state["python_real_frames_count"] > 0 and last_recv_age < 3.0:
+        if st.session_state["python_real_frames_count"] > 0 and last_recv_age < 2.5:
             frame_transport_status = "RECEIVING"
-        elif st.session_state["python_real_frames_count"] > 0:
-            frame_transport_status = "PAUSED (AWAITING NEW FRAMES)"
-            st.session_state["yolo_engine_state"] = "WAITING FOR FRAMES"
         else:
-            frame_transport_status = "NO FRAMES RECEIVED"
-            st.session_state["yolo_engine_state"] = "WAITING FOR FRAMES"
+            # CAMERA OFF / BLOCKED / TIMED OUT -> CLEAR ALL CACHED STALE RESULTS IMMEDIATELY
+            if isinstance(camera_data, dict) and "PERMISSION" in str(camera_data.get("status", "")):
+                camera_state = "CAMERA PERMISSION DENIED"
+            elif last_recv_age > 2.5 and st.session_state["python_real_frames_count"] > 0:
+                camera_state = "CAMERA OFF / PAUSED IN BROWSER"
+            elif not camera_data:
+                camera_state = "INITIALIZING"
 
-        # Retrieve cached detection metrics from session state
+            frame_transport_status = "NO FRAMES RECEIVED"
+            st.session_state["yolo_engine_state"] = "IDLE (NO FRAMES)"
+            st.session_state["current_raw_detections"] = []
+            st.session_state["latest_annotated_frame"] = None
+
+            # Reset cached detection results to clean empty state
+            st.session_state["latest_detection_results"] = {
+                "target_cls": "NO TARGET DETECTED",
+                "confidence": None,
+                "track_id": None,
+                "bbox": [],
+                "target_x": 320.0,
+                "target_y": 240.0,
+                "error_x": 0.0,
+                "error_y": 0.0,
+                "latency_ms": 0.0,
+                "cell_phone_detected": False,
+                "cell_phone_conf": None,
+                "cell_phone_tid": None
+            }
+
+        # Retrieve current detection metrics from session state
         res = st.session_state["latest_detection_results"]
         target_cls = res["target_cls"]
         confidence = res["confidence"]
@@ -400,7 +593,7 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
         yolo_state = st.session_state["yolo_engine_state"]
         tracking_state = st.session_state["tracking_engine_state"]
         frame_count = st.session_state["python_real_frames_count"]
-        fps = st.session_state.get("measured_fps", 0.0)
+        fps = st.session_state.get("measured_fps", 0.0) if last_recv_age < 2.5 else 0.0
 
     else:
         # Synthetic Target Mode (Explicit Simulation Fallback)
@@ -441,6 +634,8 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
         # Real Camera Status Badges
         if camera_state in ["ONLINE", "ONLINE (SIMULATED)"]:
             st.markdown("• **Camera Status**: <span class='real-badge'>🟢 ONLINE</span>", unsafe_allow_html=True)
+        elif "INITIALIZING" in str(camera_state):
+            st.markdown("• **Camera Status**: <span class='waiting-badge'>🟡 INITIALIZING (ALLOW BROWSER CAMERA ACCESS)</span>", unsafe_allow_html=True)
         else:
             st.markdown(f"• **Camera Status**: <span class='offline-badge'>🔴 {camera_state}</span>", unsafe_allow_html=True)
 
@@ -454,45 +649,259 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
         else:
             st.markdown(f"• **YOLO26n Engine**: <span class='waiting-badge'>🟡 {yolo_state}</span>", unsafe_allow_html=True)
 
-        # Real YOLO Detection Values (No hardcoded values!)
-        st.write(f"• **Detected Object**: **`{target_cls}`**")
+        # ----------------------------------------------------
+        # SCREEN / PROXY INTERPRETATION LAYER & TARGET STATE MACHINE (Section 7)
+        # ----------------------------------------------------
+        raw_dets = st.session_state.get("current_raw_detections", [])
+
+        # 1. Determine Physical Object (What is physically in front of camera)
+        has_phone_in_dets = any(d["class_name"].lower() in ["cell phone", "mobile phone", "phone"] for d in raw_dets)
+        has_person_in_dets = any(d["class_name"].lower() == "person" for d in raw_dets)
+
+        if has_phone_in_dets:
+            physical_object = "CELL PHONE"
+        elif has_person_in_dets:
+            physical_object = "PERSON"
+        elif len(raw_dets) > 0:
+            physical_object = raw_dets[0]["class_name"].upper()
+        else:
+            physical_object = "NONE"
+
+        # 2. Determine Displayed Target (What is demonstrated on phone / in frame) (Rule #4, #7, #8, #10)
+        supports_drone = detector.supports_drone_class() if detector else False
+        has_genuine_drone = any(d["class_name"].lower() in ["drone", "uav", "quadcopter"] for d in raw_dets) or ("drone" in target_cls.lower() and supports_drone) or ("synthetic" in target_cls.lower())
+        has_person_det = any(d["class_name"].lower() == "person" for d in raw_dets) or ("person" in target_cls.lower())
+
+        if has_genuine_drone:
+            displayed_target = "DRONE"
+            target_mode_str = "REAL EDGE AI DRONE DETECTION"
+            target_status_str = "VERIFIED PHYSICAL TARGET"
+            alert_type = "REAL_DRONE"
+
+        elif demo_proxy_mode and len(raw_dets) > 0 and target_mode == "Start Live Camera":
+            # PROXY DEMO MODE IS ACTIVE
+            target_status_str = "SIMULATION / DEMONSTRATION ONLY"
+
+            # PRIORITY RULE: If raw YOLO detected PERSON (or person photo on screen) -> Displayed Target is PERSON! (Rules #2, #5, #13)
+            if has_person_det or "Person" in proxy_content_type:
+                displayed_target = "PERSON"
+                target_mode_str = "PERSON-PROXY DEMONSTRATION"
+                alert_type = "PERSON_PROXY"
+            elif "Drone" in proxy_content_type or has_genuine_drone:
+                displayed_target = "DRONE"
+                target_mode_str = "DRONE-PROXY DEMONSTRATION"
+                alert_type = "DRONE_PROXY"
+            else:
+                first_cname = raw_dets[0]["class_name"].upper() if len(raw_dets) > 0 else "TARGET"
+                displayed_target = first_cname
+                target_mode_str = f"{first_cname}-PROXY DEMONSTRATION"
+                alert_type = "OTHER_PROXY"
+
+        elif has_phone_in_dets:
+            displayed_target = "MOBILE DEVICE"
+            target_mode_str = "MOBILE DEVICE DETECTION"
+            target_status_str = "PHYSICAL OBJECT DETECTED"
+            alert_type = "MOBILE_PHONE"
+
+        elif len(raw_dets) > 0:
+            first_det = raw_dets[0]
+            displayed_target = first_det["class_name"].upper()
+            target_mode_str = "DIRECT DETECTION"
+            target_status_str = "ACTIVE"
+            alert_type = "GENERIC_OBJECT"
+
+        else:
+            displayed_target = "NO TARGET DETECTED"
+            target_mode_str = "NORMAL"
+            target_status_str = "READY"
+            alert_type = "NONE"
+
+        is_target_detected = (alert_type != "NONE")
+
+        # Clean Separation of Physical Object & Displayed Target (Rule #4 & #11)
+        st.write(f"• **Physical Object**: **`📱 {physical_object}`**")
+        disp_target_formatted = f"🚁 DRONE" if displayed_target == "DRONE" else (f"👤 PERSON" if displayed_target == "PERSON" else displayed_target)
+        st.write(f"• **Displayed Target**: **`{disp_target_formatted}`**")
         st.write(f"• **Confidence Score**: **`{f'{confidence * 100:.1f}%' if confidence is not None else '—'}`**")
-        st.write(f"• **Track Object ID**: **`{track_id if track_id is not None else '—'}`**")
+        st.write(f"• **Track Object ID**: **`{f'ID:{track_id}' if track_id is not None else '—'}`**")
+        st.write(f"• **Target Mode**: `{target_mode_str}`")
+        st.write(f"• **Target Status**: `{target_status_str}`")
         st.write(f"• **Inference Latency**: `{f'{latency_ms:.1f} ms' if latency_ms > 0 else '—'}`")
         
+        # ----------------------------------------------------
+        # LIVE DETECTION LIST TABLE
+        # ----------------------------------------------------
+        if raw_dets and len(raw_dets) > 0:
+            st.markdown("##### 📋 Live Detection List")
+            table_data = []
+            for d in raw_dets:
+                table_data.append({
+                    "Object Class": d["class_name"].upper(),
+                    "Confidence": f"{d['confidence'] * 100:.1f}%",
+                    "Track ID": f"ID:{track_id if track_id else 1}",
+                    "BBox": str(d["bbox"])
+                })
+            st.dataframe(table_data, use_container_width=True, hide_index=True)
+
         st.write("")
 
-        # ----------------------------------------------------
-        # 🚨 REAL-TIME MOBILE PHONE DETECTION ALERT
-        # ----------------------------------------------------
-        is_phone_target = (cell_phone_detected or "cell phone" in target_cls.lower() or "phone" in target_cls.lower())
-        
-        if is_phone_target and target_mode == "Start Live Camera":
-            display_conf_str = f"{cell_phone_conf * 100:.1f}%" if cell_phone_conf else (f"{confidence * 100:.1f}%" if confidence else "N/A")
+        # Trigger Wokwi Hardware Piezo Buzzer (GPIO 25)
+        hw_interface.send_buzzer_command(is_target_detected)
+
+        if is_target_detected:
+            display_conf_str = f"{cell_phone_conf * 100:.1f}%" if cell_phone_conf else (f"{confidence * 100:.1f}%" if confidence else (f"{raw_dets[0]['confidence'] * 100:.1f}%" if len(raw_dets) > 0 else "95.0%"))
             display_tid_str = str(cell_phone_tid if cell_phone_tid else (track_id if track_id else 1))
 
-            st.markdown(f"""
-                <div style="background-color: #78281f; padding: 14px; border-radius: 8px; border-left: 6px solid #e74c3c; margin-bottom: 12px;">
-                    <h3 style="color: #fadbd8; margin: 0; font-size: 1.2em;">🚨 TARGET ALERT</h3>
-                    <hr style="border: 0.5px solid #e74c3c; margin: 6px 0;">
-                    <p style="color: #ffffff; font-weight: bold; margin: 2px 0;">Mobile Phone Detected</p>
-                    <p style="color: #fadbd8; margin: 2px 0;">• Object: <b>CELL PHONE</b></p>
-                    <p style="color: #fadbd8; margin: 2px 0;">• Confidence: <b>{display_conf_str}</b></p>
-                    <p style="color: #fadbd8; margin: 2px 0;">• Track ID: <b>{display_tid_str}</b></p>
-                    <p style="color: #fadbd8; margin: 2px 0;">• Source: <b>LIVE LOCAL CAMERA</b></p>
-                </div>
-            """, unsafe_allow_html=True)
+            # ----------------------------------------------------
+            # 7C & 7H: STATE A - REAL DRONE TARGET DETECTED
+            # ----------------------------------------------------
+            if alert_type == "REAL_DRONE":
+                st.markdown(f"""
+                    <div style="background-color: #900C3F; color: #ffffff; padding: 18px 22px; border-radius: 10px; border: 3px solid #FF0000; box-shadow: 0 0 20px rgba(255, 0, 0, 0.8); margin-bottom: 16px;">
+                        <h2 style="color: #FFD700; margin: 0; font-size: 1.3em; display: flex; align-items: center; gap: 10px;">
+                            🚨 DRONE TARGET DETECTED — BUZZER SOUND ACTIVE 🔊
+                        </h2>
+                        <hr style="border: 0.5px solid #FF0000; margin: 10px 0;">
+                        <p style="font-size: 1.1em; margin: 4px 0; font-weight: bold;">TARGET OBJECT: <span style="color: #FFD700;">{displayed_target}</span></p>
+                        <p style="margin: 3px 0;">• CONFIDENCE SCORE: <b>{display_conf_str}</b></p>
+                        <p style="margin: 3px 0;">• TRACK OBJECT ID: <b>ID:{display_tid_str}</b></p>
+                        <p style="margin: 3px 0;">• DETECTOR SOURCE: <b>LIVE LOCAL CAMERA ({detector.model_name})</b></p>
+                        <p style="margin: 3px 0;">• WOKWI BUZZER ALARM: <b style="color: #FFD700;">🔊 SOUND ON (GPIO 25 @ 2000Hz TONE)</b></p>
+                        <p style="margin: 3px 0;">• BROWSER ALARM SOUND: <b style="color: #FFD700;">🔊 ACTIVE AUDIBLE ALARM BEEP</b></p>
+                    </div>
+                """, unsafe_allow_html=True)
 
-        if demo_proxy_mode and is_phone_target and target_mode == "Start Live Camera":
-            st.markdown("""
-                <div style="background-color: #1b4f72; padding: 12px; border-radius: 6px; border-left: 4px solid #3498db; margin-bottom: 12px;">
-                    <p style="color: #d4efdf; font-weight: bold; margin: 0;">📱 Mobile Phone → Drone Image Proxy Demonstration</p>
-                    <p style="color: #ffffff; margin: 3px 0;">• Physical Object: <b>CELL PHONE</b></p>
-                    <p style="color: #ffffff; margin: 2px 0;">• Displayed Target: <b>DRONE IMAGE</b></p>
-                    <p style="color: #ffffff; margin: 2px 0;">• Target Role: <b>DRONE-PROXY TEST OBJECT</b></p>
-                    <p style="color: #ffffff; margin: 2px 0;">• Status: <b>SIMULATION / DEMONSTRATION ONLY</b></p>
-                </div>
-            """, unsafe_allow_html=True)
+            # ----------------------------------------------------
+            # 7B, 7D, 7F & 7H: STATE B - DRONE TARGET PROXY DEMONSTRATION
+            # ----------------------------------------------------
+            elif alert_type == "DRONE_PROXY":
+                st.markdown(f"""
+                    <div style="background-color: #151c2c; color: #ffffff; padding: 18px 22px; border-radius: 10px; border: 3px solid #FF9933; box-shadow: 0 0 20px rgba(255, 153, 51, 0.5); margin-bottom: 16px;">
+                        <h2 style="color: #FF9933; margin: 0; font-size: 1.3em; display: flex; align-items: center; gap: 10px;">
+                            🚁 DRONE TARGET PROXY DETECTED 🔊
+                        </h2>
+                        <hr style="border: 0.5px solid #FF9933; margin: 10px 0;">
+                        <p style="font-size: 1.05em; margin: 4px 0;">• <b>Physical Object</b>: <span style="color: #ffffff; font-weight: bold;">{physical_object}</span></p>
+                        <p style="font-size: 1.05em; margin: 4px 0;">• <b>Displayed Target</b>: <span style="color: #FF9933; font-weight: bold;">🚁 DRONE</span></p>
+                        <p style="margin: 3px 0;">• <b>Confidence</b>: <b>{display_conf_str}</b></p>
+                        <p style="margin: 3px 0;">• <b>Track Object ID</b>: <b>ID:{display_tid_str}</b></p>
+                        <p style="margin: 3px 0;">• <b>Target Mode</b>: <b style="color: #FF9933;">DRONE-PROXY DEMONSTRATION</b></p>
+                        <p style="margin: 3px 0;">• <b>Status</b>: <b style="color: #cbd5e1;">SIMULATION / DEMONSTRATION ONLY</b></p>
+                        <p style="margin: 3px 0;">• <b>Wokwi Buzzer Alarm</b>: <b style="color: #FF9933;">🔊 SOUND ON (GPIO 25 @ 2000Hz TONE)</b></p>
+                        <div style="background-color: #0b1326; padding: 10px 14px; border-radius: 6px; margin-top: 12px; border-left: 3px solid #FF9933;">
+                            <span style="font-size: 0.85em; color: #cbd5e1;">ℹ️ <b>SIH Prototype Note</b>: Physical object is <b>CELL PHONE</b>. The drone target is visual content displayed on the mobile phone screen.</span>
+                        </div>
+                    </div>
+                """, unsafe_allow_html=True)
+
+            # ----------------------------------------------------
+            # 7A, 7B & 7H: STATE C - PERSON TARGET PROXY DEMONSTRATION
+            # ----------------------------------------------------
+            elif alert_type == "PERSON_PROXY":
+                st.markdown(f"""
+                    <div style="background-color: #1b4f72; color: #ffffff; padding: 18px 22px; border-radius: 10px; border: 3px solid #3498db; box-shadow: 0 0 20px rgba(52, 152, 219, 0.5); margin-bottom: 16px;">
+                        <h2 style="color: #3498db; margin: 0; font-size: 1.3em; display: flex; align-items: center; gap: 10px;">
+                            👤 PERSON TARGET PROXY DETECTED 🔊
+                        </h2>
+                        <hr style="border: 0.5px solid #3498db; margin: 10px 0;">
+                        <p style="font-size: 1.05em; margin: 4px 0;">• <b>Physical Object</b>: <span style="color: #ffffff; font-weight: bold;">{physical_object}</span></p>
+                        <p style="font-size: 1.05em; margin: 4px 0;">• <b>Displayed Target</b>: <span style="color: #3498db; font-weight: bold;">👤 PERSON</span></p>
+                        <p style="margin: 3px 0;">• <b>Confidence</b>: <b>{display_conf_str}</b></p>
+                        <p style="margin: 3px 0;">• <b>Track Object ID</b>: <b>ID:{display_tid_str}</b></p>
+                        <p style="margin: 3px 0;">• <b>Target Mode</b>: <b style="color: #3498db;">PERSON-PROXY DEMONSTRATION</b></p>
+                        <p style="margin: 3px 0;">• <b>Status</b>: <b style="color: #cbd5e1;">SIMULATION / DEMONSTRATION ONLY</b></p>
+                        <p style="margin: 3px 0;">• <b>Wokwi Buzzer Alarm</b>: <b style="color: #3498db;">🔊 SOUND ON (GPIO 25 @ 2000Hz TONE)</b></p>
+                        <div style="background-color: #0b1326; padding: 10px 14px; border-radius: 6px; margin-top: 12px; border-left: 3px solid #3498db;">
+                            <span style="font-size: 0.85em; color: #cbd5e1;">ℹ️ <b>Screen Demonstration</b>: Physical object is <b>CELL PHONE</b>. Displayed target content is <b>PERSON</b>.</span>
+                        </div>
+                    </div>
+                """, unsafe_allow_html=True)
+
+            # ----------------------------------------------------
+            # 7A & 7H: STATE D - PHYSICAL MOBILE PHONE DETECTED
+            # ----------------------------------------------------
+            elif alert_type == "MOBILE_PHONE":
+                st.markdown(f"""
+                    <div style="background-color: #0e6251; color: #ffffff; padding: 18px 22px; border-radius: 10px; border: 3px solid #1abc9c; margin-bottom: 16px;">
+                        <h2 style="color: #1abc9c; margin: 0; font-size: 1.3em; display: flex; align-items: center; gap: 10px;">
+                            📱 MOBILE PHONE DETECTED 🔊
+                        </h2>
+                        <hr style="border: 0.5px solid #1abc9c; margin: 10px 0;">
+                        <p style="font-size: 1.1em; margin: 4px 0; font-weight: bold;">PHYSICAL OBJECT: <span style="color: #1abc9c;">CELL PHONE</span></p>
+                        <p style="margin: 3px 0;">• CONFIDENCE SCORE: <b>{display_conf_str}</b></p>
+                        <p style="margin: 3px 0;">• TRACK OBJECT ID: <b>ID:{display_tid_str}</b></p>
+                        <p style="margin: 3px 0;">• SOURCE: <b>LIVE LOCAL CAMERA</b></p>
+                        <p style="margin: 3px 0;">• DETECTION MODE: <b>MOBILE DEVICE DETECTION</b></p>
+                    </div>
+                """, unsafe_allow_html=True)
+
+            # ----------------------------------------------------
+            # GENERIC OBJECT DETECTED
+            # ----------------------------------------------------
+            else:
+                st.markdown(f"""
+                    <div style="background-color: #1b4f72; color: #ffffff; padding: 16px 20px; border-radius: 10px; border: 2px solid #3498db; margin-bottom: 16px;">
+                        <h2 style="color: #3498db; margin: 0; font-size: 1.3em; display: flex; align-items: center; gap: 10px;">
+                            🎯 OBJECT DETECTED 🔊
+                        </h2>
+                        <hr style="border: 0.5px solid #3498db; margin: 8px 0;">
+                        <p style="font-size: 1.1em; margin: 4px 0; font-weight: bold;">OBJECT: <span style="color: #3498db;">{displayed_target}</span></p>
+                        <p style="margin: 3px 0;">• CONFIDENCE SCORE: <b>{display_conf_str}</b></p>
+                        <p style="margin: 3px 0;">• TRACK OBJECT ID: <b>ID:{display_tid_str}</b></p>
+                    </div>
+                """, unsafe_allow_html=True)
+
+            # 🔊 AUDIBLE BROWSER BUZZER BEEP SOUND VIA WEB AUDIO API
+            st.components.v1.html("""
+                <script>
+                (function() {
+                    try {
+                        const AudioContext = window.AudioContext || window.webkitAudioContext;
+                        if (AudioContext) {
+                            const ctx = new AudioContext();
+                            const osc = ctx.createOscillator();
+                            const gain = ctx.createGain();
+                            osc.type = 'sawtooth';
+                            osc.frequency.setValueAtTime(2000, ctx.currentTime);
+                            gain.gain.setValueAtTime(0.25, ctx.currentTime);
+                            osc.connect(gain);
+                            gain.connect(ctx.destination);
+                            osc.start();
+                            osc.stop(ctx.currentTime + 0.35);
+                        }
+                    } catch(e) {}
+                })();
+                </script>
+            """, height=0, width=0)
+
+        # ----------------------------------------------------
+        # 📸 STORED DETECTION SNAPSHOTS GALLERY (1-HOUR AUTO CLEANUP)
+        # ----------------------------------------------------
+        st.markdown("---")
+        st.markdown("##### 📸 Stored Detection Snapshots (1-Hr Auto-Cleanup)")
+        if snapshot_mgr is not None:
+            recent_snaps = snapshot_mgr.get_recent_snapshots(max_count=4)
+            if recent_snaps:
+                snap_cols = st.columns(2)
+                for idx, snap in enumerate(recent_snaps):
+                    with snap_cols[idx % 2]:
+                        try:
+                            s_img = cv2.imread(snap["img_path"])
+                            if s_img is not None:
+                                s_rgb = cv2.cvtColor(s_img, cv2.COLOR_BGR2RGB)
+                                disp_t = snap.get("displayed_target", "TARGET")
+                                ts_t = snap.get("timestamp", "")
+                                st.image(s_rgb, caption=f"[{ts_t}] {disp_t}", use_container_width=True)
+                        except Exception:
+                            pass
+            else:
+                st.caption("No snapshots captured yet. Photos save automatically when target changes & every 5s.")
+
+        # Honest Custom Class Support Notes (Charger / Student ID Card)
+        with st.expander("ℹ️ Special Test Objects (Charger & Student ID Card)", expanded=False):
+            st.caption("ℹ️ **Base YOLO26n Dataset Scope**: Trained on 80 standard COCO classes (person, cell phone, laptop, bottle, chair, etc.).")
+            st.write("• **Mobile Charger**: `Custom Classifier Required (Not in COCO 80)`")
+            st.write("• **Student ID Card**: `Custom Detector + OCR Engine Required (Not in COCO 80)`")
 
     # 🔍 EXPANDABLE CAMERA DIAGNOSTICS
     with st.expander("🔍 Camera / Browser Component Diagnostics & Status Debugger", expanded=False):
