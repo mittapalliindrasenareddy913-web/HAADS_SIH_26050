@@ -16,7 +16,7 @@ os.environ["NUMEXPR_NUM_THREADS"] = "1"
 
 import time
 import numpy as np
-import cv2
+import cv2_wrapper as cv2
 cv2.setNumThreads(1)
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))

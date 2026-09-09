@@ -7,7 +7,7 @@ Automatically deletes snapshot photos and metadata logs older than 1 hour (3600s
 import os
 import time
 import json
-import cv2
+import cv2_wrapper as cv2
 
 
 class SnapshotManager:

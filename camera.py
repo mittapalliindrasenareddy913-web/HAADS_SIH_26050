@@ -6,7 +6,7 @@ Decoupled from server hardware locks to prevent browser NotReadableError.
 
 import time
 import numpy as np
-import cv2
+import cv2_wrapper as cv2
 
 
 class CameraManager:

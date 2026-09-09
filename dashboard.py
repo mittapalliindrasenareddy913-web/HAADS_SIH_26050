@@ -7,7 +7,7 @@ Includes Native HTML5 device-local webcam component, YOLO26n Edge AI detection, 
 
 import streamlit as st
 import streamlit.components.v1 as components
-import cv2
+import cv2_wrapper as cv2
 import json
 import time
 import os
