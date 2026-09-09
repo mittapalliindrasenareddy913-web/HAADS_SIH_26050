@@ -659,6 +659,8 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
         displayed_target = latest_res.get("displayed_target") or target_cls
         target_mode_str = latest_res.get("target_mode_str", "DIRECT DETECTION")
         target_status_str = latest_res.get("target_status_str", "ACTIVE")
+        alert_type = latest_res.get("alert_type", "NONE")
+        is_target_detected = latest_res.get("is_target_detected", False)
 
         # Clean Separation of Physical Object & Displayed Target
         st.write(f"• **Physical Object**: **`📱 {physical_object}`**")
