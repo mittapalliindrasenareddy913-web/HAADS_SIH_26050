@@ -2,7 +2,7 @@
 HAADS SIH 26050 - Headless OpenCV Safe Wrapper
 Attempts native cv2 import first.
 If libGL.so.1 or headless OS error occurs on Streamlit Cloud, falls back to PIL / numpy
-implementations so the application never crashes with ImportError.
+implementations so the application and ultralytics never crash with ImportError or AttributeError.
 """
 
 import sys
@@ -10,10 +10,20 @@ import io
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-# Constants
+# OpenCV Constants
+__version__ = "4.10.0"
 FONT_HERSHEY_SIMPLEX = 0
+FONT_HERSHEY_COMPLEX = 1
 IMREAD_COLOR = 1
+IMREAD_GRAYSCALE = 0
+IMREAD_UNCHANGED = -1
 COLOR_BGR2RGB = 4
+COLOR_RGB2BGR = 4
+COLOR_BGR2GRAY = 6
+INTER_LINEAR = 1
+INTER_NEAREST = 0
+INTER_CUBIC = 2
+INTER_AREA = 3
 
 try:
     import cv2
@@ -27,6 +37,30 @@ except (ImportError, Exception) as err:
 if not _NATIVE_CV2:
     sys.modules['cv2'] = sys.modules[__name__]
 
+
+def imshow(winname, mat):
+    """Headless window display dummy."""
+    pass
+
+
+def destroyAllWindows():
+    pass
+
+
+def destroyWindow(*args, **kwargs):
+    pass
+
+
+def waitKey(delay=0):
+    return -1
+
+
+def namedWindow(*args, **kwargs):
+    pass
+
+
+def moveWindow(*args, **kwargs):
+    pass
 
 
 def imdecode(buf, flags=1):
@@ -80,6 +114,23 @@ def imread(filename, flags=1):
         return None
 
 
+def imencode(ext, img, *args, **kwargs):
+    try:
+        pil_img = Image.fromarray(img)
+        buf = io.BytesIO()
+        fmt = ext.lstrip(".").upper()
+        if fmt in ["JPG", "JPEG"]:
+            fmt = "JPEG"
+        elif fmt == "PNG":
+            fmt = "PNG"
+        else:
+            fmt = "PNG"
+        pil_img.save(buf, format=fmt)
+        return True, np.frombuffer(buf.getvalue(), dtype=np.uint8)
+    except Exception:
+        return False, np.array([], dtype=np.uint8)
+
+
 def cvtColor(img, code):
     if _NATIVE_CV2 and cv2 is not None:
         try:
@@ -91,6 +142,27 @@ def cvtColor(img, code):
     if len(img.shape) == 3 and img.shape[2] == 3:
         return img[:, :, ::-1].copy()
     return img
+
+
+def resize(src, dsize, fx=0, fy=0, interpolation=1):
+    if _NATIVE_CV2 and cv2 is not None:
+        try:
+            return cv2.resize(src, dsize, fx=fx, fy=fy, interpolation=interpolation)
+        except Exception:
+            pass
+    try:
+        if src is None:
+            return None
+        h, w = src.shape[:2]
+        new_w = dsize[0] if dsize and dsize[0] > 0 else int(w * fx)
+        new_h = dsize[1] if dsize and dsize[1] > 0 else int(h * fy)
+        if new_w <= 0 or new_h <= 0:
+            return src
+        pil_img = Image.fromarray(src)
+        resized_pil = pil_img.resize((new_w, new_h))
+        return np.array(resized_pil)
+    except Exception:
+        return src
 
 
 def rectangle(img, pt1, pt2, color, thickness=1):
@@ -188,3 +260,32 @@ def setNumThreads(n):
             cv2.setNumThreads(n)
         except Exception:
             pass
+
+
+class DummyVideoCapture:
+    def __init__(self, *args, **kwargs): pass
+    def isOpened(self): return False
+    def read(self): return False, None
+    def release(self): pass
+    def set(self, *args, **kwargs): return True
+    def get(self, *args, **kwargs): return 0.0
+
+
+class DummyVideoWriter:
+    def __init__(self, *args, **kwargs): pass
+    def isOpened(self): return False
+    def write(self, frame): pass
+    def release(self): pass
+
+
+VideoCapture = DummyVideoCapture
+VideoWriter = DummyVideoWriter
+
+
+def __getattr__(name):
+    """Dynamic fallback attribute getter so cv2_wrapper safely resolves any missing attribute or function."""
+    if name.isupper():
+        return 0
+    def dummy_func(*args, **kwargs):
+        return None
+    return dummy_func

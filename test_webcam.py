@@ -5,7 +5,7 @@ Tests laptop built-in webcam initialization and frame retrieval via OpenCV.
 
 import sys
 import os
-import cv2
+import cv2_wrapper as cv2
 import time
 
 # Ensure package directory is in python path

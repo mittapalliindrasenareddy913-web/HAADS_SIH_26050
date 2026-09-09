@@ -13,6 +13,9 @@ os.environ["OPENBLAS_NUM_THREADS"] = "1"
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
 
+# Import cv2_wrapper FIRST to patch sys.modules['cv2'] before ultralytics or camera modules load
+import cv2_wrapper as cv2
+
 import streamlit as st
 
 # Add project root directory to path
