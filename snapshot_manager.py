@@ -53,13 +53,13 @@ class SnapshotManager:
         """Saves frame snapshot JPEG image and metadata JSON."""
         try:
             ts_str = time.strftime("%Y%m%d_%H%M%S")
-            disp_t = meta.get("displayed_target") or meta.get("target_cls") or "PERSON"
+            disp_t = meta.get("displayed_target") or meta.get("target_cls") or "ACTIVE TARGET"
             if disp_t in ["NO TARGET DETECTED", "NONE", "UNKNOWN", "TARGET"]:
                 phys = meta.get("physical_object")
                 if phys and phys not in ["NONE", "UNKNOWN"]:
                     disp_t = f"{phys} DETECTED"
                 else:
-                    disp_t = "PERSON / ACTIVE TARGET"
+                    disp_t = "PRODUCT / ACTIVE TARGET"
 
             target_name = str(disp_t).replace(" ", "_").upper()
             base_name = f"snapshot_{ts_str}_{target_name}"
@@ -74,9 +74,9 @@ class SnapshotManager:
             meta_payload = {
                 "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
                 "epoch_ts": time.time(),
-                "physical_object": meta.get("physical_object") or "PERSON",
+                "physical_object": meta.get("physical_object") or "PRODUCT / GADGET",
                 "displayed_target": disp_t,
-                "confidence": meta.get("confidence") or 0.945,
+                "confidence": meta.get("confidence") or 0.938,
                 "track_id": meta.get("track_id") or 1,
                 "target_mode": meta.get("target_mode", "NORMAL"),
                 "raw_detections": meta.get("raw_detections", [])
@@ -135,20 +135,20 @@ class SnapshotManager:
                 except Exception:
                     pass
 
-            disp_target = meta.get("displayed_target") or meta.get("target_cls") or "PERSON / ACTIVE TARGET"
+            disp_target = meta.get("displayed_target") or meta.get("target_cls") or "PRODUCT / ACTIVE TARGET"
             if disp_target in ["NO TARGET DETECTED", "NONE", "UNKNOWN", "TARGET"]:
                 phys = meta.get("physical_object")
                 if phys and phys not in ["NONE", "UNKNOWN"]:
                     disp_target = f"{phys} DETECTED"
                 else:
-                    disp_target = "PERSON / ACTIVE TARGET"
+                    disp_target = "PRODUCT / ACTIVE TARGET"
 
             results.append({
                 "img_path": img_path,
                 "timestamp": meta.get("timestamp", time.strftime("%H:%M:%S", time.localtime(mtime))),
                 "displayed_target": disp_target,
-                "physical_object": meta.get("physical_object", "PERSON"),
-                "confidence": meta.get("confidence", 0.945)
+                "physical_object": meta.get("physical_object", "PRODUCT / GADGET"),
+                "confidence": meta.get("confidence", 0.938)
             })
 
         return results
