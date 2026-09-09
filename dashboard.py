@@ -650,75 +650,17 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
             st.markdown(f"• **YOLO26n Engine**: <span class='waiting-badge'>🟡 {yolo_state}</span>", unsafe_allow_html=True)
 
         # ----------------------------------------------------
-        # SCREEN / PROXY INTERPRETATION LAYER & TARGET STATE MACHINE (Section 7)
+        # TARGET DETECTION SUMMARY UI
         # ----------------------------------------------------
         raw_dets = st.session_state.get("current_raw_detections", [])
+        latest_res = st.session_state.get("latest_detection_results", {})
 
-        # 1. Determine Physical Object (What is physically in front of camera)
-        has_phone_in_dets = any(d["class_name"].lower() in ["cell phone", "mobile phone", "phone"] for d in raw_dets)
-        has_person_in_dets = any(d["class_name"].lower() == "person" for d in raw_dets)
+        physical_object = latest_res.get("physical_object") or target_cls
+        displayed_target = latest_res.get("displayed_target") or target_cls
+        target_mode_str = latest_res.get("target_mode_str", "DIRECT DETECTION")
+        target_status_str = latest_res.get("target_status_str", "ACTIVE")
 
-        if has_phone_in_dets:
-            physical_object = "CELL PHONE"
-        elif has_person_in_dets:
-            physical_object = "PERSON"
-        elif len(raw_dets) > 0:
-            physical_object = raw_dets[0]["class_name"].upper()
-        else:
-            physical_object = "NONE"
-
-        # 2. Determine Displayed Target (What is demonstrated on phone / in frame) (Rule #4, #7, #8, #10)
-        supports_drone = detector.supports_drone_class() if detector else False
-        has_genuine_drone = any(d["class_name"].lower() in ["drone", "uav", "quadcopter"] for d in raw_dets) or ("drone" in target_cls.lower() and supports_drone) or ("synthetic" in target_cls.lower())
-        has_person_det = any(d["class_name"].lower() == "person" for d in raw_dets) or ("person" in target_cls.lower())
-
-        if has_genuine_drone:
-            displayed_target = "DRONE"
-            target_mode_str = "REAL EDGE AI DRONE DETECTION"
-            target_status_str = "VERIFIED PHYSICAL TARGET"
-            alert_type = "REAL_DRONE"
-
-        elif demo_proxy_mode and len(raw_dets) > 0 and target_mode == "Start Live Camera":
-            # PROXY DEMO MODE IS ACTIVE
-            target_status_str = "SIMULATION / DEMONSTRATION ONLY"
-
-            # PRIORITY RULE: If raw YOLO detected PERSON (or person photo on screen) -> Displayed Target is PERSON! (Rules #2, #5, #13)
-            if has_person_det or "Person" in proxy_content_type:
-                displayed_target = "PERSON"
-                target_mode_str = "PERSON-PROXY DEMONSTRATION"
-                alert_type = "PERSON_PROXY"
-            elif "Drone" in proxy_content_type or has_genuine_drone:
-                displayed_target = "DRONE"
-                target_mode_str = "DRONE-PROXY DEMONSTRATION"
-                alert_type = "DRONE_PROXY"
-            else:
-                first_cname = raw_dets[0]["class_name"].upper() if len(raw_dets) > 0 else "TARGET"
-                displayed_target = first_cname
-                target_mode_str = f"{first_cname}-PROXY DEMONSTRATION"
-                alert_type = "OTHER_PROXY"
-
-        elif has_phone_in_dets:
-            displayed_target = "MOBILE DEVICE"
-            target_mode_str = "MOBILE DEVICE DETECTION"
-            target_status_str = "PHYSICAL OBJECT DETECTED"
-            alert_type = "MOBILE_PHONE"
-
-        elif len(raw_dets) > 0:
-            first_det = raw_dets[0]
-            displayed_target = first_det["class_name"].upper()
-            target_mode_str = "DIRECT DETECTION"
-            target_status_str = "ACTIVE"
-            alert_type = "GENERIC_OBJECT"
-
-        else:
-            displayed_target = "NO TARGET DETECTED"
-            target_mode_str = "NORMAL"
-            target_status_str = "READY"
-            alert_type = "NONE"
-
-        is_target_detected = (alert_type != "NONE")
-
-        # Clean Separation of Physical Object & Displayed Target (Rule #4 & #11)
+        # Clean Separation of Physical Object & Displayed Target
         st.write(f"• **Physical Object**: **`📱 {physical_object}`**")
         disp_target_formatted = f"🚁 DRONE" if displayed_target == "DRONE" else (f"👤 PERSON" if displayed_target == "PERSON" else displayed_target)
         st.write(f"• **Displayed Target**: **`{disp_target_formatted}`**")
