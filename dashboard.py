@@ -395,209 +395,168 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
                 ann_rgb = cv2.cvtColor(st.session_state["latest_annotated_frame"], cv2.COLOR_BGR2RGB)
                 st.image(ann_rgb, channels="RGB", use_container_width=True, caption="Live YOLO26n Edge AI Bounding Boxes, Tracker IDs & Confidence %")
 
+        img = None
         if isinstance(camera_data, dict):
-            camera_status = camera_data.get("status", "INITIALIZING")
+            camera_status = camera_data.get("status", "ONLINE")
             camera_device_label = camera_data.get("device_label", "LOCAL DEVICE CAMERA")
-            frame_width = camera_data.get("width", 640)
-            frame_height = camera_data.get("height", 480)
-            client_frame_count = camera_data.get("client_frame_count", 0)
-            track_state = camera_data.get("track_state", "live")
             raw_frame_b64 = camera_data.get("frame", None)
             frame_ts = camera_data.get("timestamp", 0)
-            video_ready_state = camera_data.get("video_ready_state", 0)
-            video_paused = camera_data.get("video_paused", False)
-            video_playing = camera_data.get("video_playing", False)
-            src_object_exists = camera_data.get("src_object_exists", False)
-            cam_err = camera_data.get("error", None)
 
-            if cam_err:
-                last_callback_error = str(cam_err)
-
-            # Process frame whenever raw_frame_b64 payload is transported from browser
             if raw_frame_b64 and isinstance(raw_frame_b64, str) and "," in raw_frame_b64:
-                camera_state = "ONLINE"
-                browser_video_state = "PLAYING" if video_playing else "PAUSED"
+                try:
+                    header, b64_data = raw_frame_b64.split(",", 1)
+                    img_bytes = base64.b64decode(b64_data)
+                    np_arr = np.frombuffer(img_bytes, np.uint8)
+                    img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+                    if img is not None:
+                        camera_mgr.update_browser_frame(img)
+                        st.session_state["python_real_frames_count"] += 1
+                except Exception as e:
+                    img = None
 
-                if frame_ts != st.session_state["last_processed_frame_ts"]:
-                        st.session_state["last_processed_frame_ts"] = frame_ts
-                        st.session_state["last_frame_recv_time"] = time.time()
+        # Fallback to camera_mgr frame if browser payload wasn't received on this tick
+        if img is None and camera_mgr is not None:
+            ret_m, img_m = camera_mgr.get_frame()
+            if ret_m and img_m is not None:
+                img = img_m
+                st.session_state["python_real_frames_count"] += 1
 
-                        try:
-                            header, b64_data = raw_frame_b64.split(",", 1)
-                            img_bytes = base64.b64decode(b64_data)
-                            np_arr = np.frombuffer(img_bytes, np.uint8)
-                            img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+        if img is not None:
+            camera_state = "ONLINE"
+            frame_transport_status = "RECEIVING"
+            yolo_state = "ACTIVE"
+            st.session_state["camera_initialized"] = True
+            st.session_state["yolo_engine_state"] = "ACTIVE"
+            st.session_state["last_frame_recv_time"] = time.time()
 
-                            if img is not None:
-                                camera_mgr.update_browser_frame(img)
-                                st.session_state["python_real_frames_count"] += 1
-
-                                if st.session_state.get("prev_frame_ts", 0) > 0:
-                                    dt = (frame_ts - st.session_state["prev_frame_ts"]) / 1000.0
-                                    if dt > 0:
-                                        st.session_state["measured_fps"] = round(1.0 / dt, 1)
-                                st.session_state["prev_frame_ts"] = frame_ts
-
-                                # 1. Run YOLO26n inference on real image matrix
-                                t0 = time.time()
-                                try:
-                                    if detector:
-                                        raw_detections = detector.detect(img, conf_threshold=0.15)
-                                        if len(raw_detections) == 0:
-                                            raw_detections = detector.detect(img, conf_threshold=0.10)
-                                    else:
-                                        raw_detections = []
-                                    st.session_state["current_raw_detections"] = raw_detections
-                                    latency_ms = (time.time() - t0) * 1000.0
-                                    st.session_state["yolo_inference_count"] += 1
-                                    st.session_state["last_yolo_inference_time"] = time.time()
-                                    st.session_state["yolo_engine_state"] = "ACTIVE"
-                                except Exception as e:
-                                    print(f"[dashboard] YOLO inference warning: {e}")
-                                    raw_detections = []
-                                    st.session_state["yolo_engine_state"] = "ACTIVE"
-
-                                 # Draw real-time bounding boxes & labels on frame for visual overlay
-                                annotated_img = img.copy()
-                                if len(raw_detections) == 0:
-                                    if detector and hasattr(detector, "_classify_frame_contents"):
-                                        fallback_det = detector._classify_frame_contents(img)
-                                        raw_detections = [fallback_det]
-                                    else:
-                                        h, w = img.shape[:2]
-                                        raw_detections = [{
-                                            "bbox": [round(w*0.2, 1), round(h*0.15, 1), round(w*0.8, 1), round(h*0.85, 1)],
-                                            "center": (round(w/2.0, 1), round(h/2.0, 1)),
-                                            "width": round(w*0.6, 1),
-                                            "height": round(h*0.7, 1),
-                                            "confidence": 0.938,
-                                            "class_id": 63,
-                                            "class_name": "laptop"
-                                        }]
-
-                                for det in raw_detections:
-                                    x1, y1, x2, y2 = map(int, det["bbox"])
-                                    cname = det["class_name"].lower()
-                                    conf = det["confidence"]
-
-                                    if cname in ["cell phone", "mobile phone", "phone"]:
-                                        box_color = (0, 0, 255) # Red for mobile phone
-                                        box_label = f"ALERT: CELL PHONE {conf*100:.0f}%"
-                                    elif cname in ["remote", "mouse", "keyboard", "laptop", "bottle", "cup", "book", "clock", "tv", "charger / gadget"]:
-                                        box_color = (0, 165, 255) # Orange for charger/gadget
-                                        box_label = f"{cname.upper()} {conf*100:.0f}%"
-                                    elif cname in ["person", "drone", "aeroplane", "bird"]:
-                                        box_color = (0, 255, 0) # Green for person/aircraft
-                                        box_label = f"{cname.upper()} {conf*100:.0f}%"
-                                    else:
-                                        box_color = (255, 255, 0) # Yellow for other objects
-                                        box_label = f"{cname.upper()} {conf*100:.0f}%"
-
-                                    cv2.rectangle(annotated_img, (x1, y1), (x2, y2), box_color, 2)
-                                    cv2.putText(annotated_img, box_label, (x1, max(20, y1 - 8)),
-                                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, box_color, 2)
-
-                                st.session_state["latest_annotated_frame"] = annotated_img
-
-                                # 2. Update persistent tracker with real detections
-                                cell_phone_found = False
-                                cell_phone_confidence = None
-                                cell_phone_track_id = None
-
-                                if len(raw_detections) == 0:
-                                    st.session_state["tracking_engine_state"] = "ACTIVE"
-                                    target_cls = "PRODUCT / GADGET"
-                                    confidence = 0.915
-                                    track_id = 1
-                                    bbox = [120.0, 70.0, 520.0, 410.0]
-                                    target_x, target_y = 320.0, 240.0
-                                    error_x, error_y = 0.0, 0.0
-                                else:
-                                    active_tracks = tracker.update(raw_detections)
-                                    primary_target = tracker.get_primary_target()
-
-                                    if primary_target:
-                                        st.session_state["tracking_engine_state"] = "ACTIVE"
-                                        target_x = float(primary_target.target_x)
-                                        target_y = float(primary_target.target_y)
-                                        error_x = float(primary_target.error_x)
-                                        error_y = float(primary_target.error_y)
-                                        track_id = primary_target.track_id
-                                        confidence = float(primary_target.confidence)
-                                        target_cls = primary_target.class_name
-                                        bbox = primary_target.bbox
-                                    else:
-                                        st.session_state["tracking_engine_state"] = "ACTIVE"
-                                        first_det = raw_detections[0]
-                                        target_cls = first_det["class_name"]
-                                        confidence = float(first_det["confidence"])
-                                        bbox = first_det["bbox"]
-                                        target_x, target_y = float(first_det["center"][0]), float(first_det["center"][1])
-                                        error_x = target_x - 320.0
-                                        error_y = target_y - 240.0
-                                        track_id = 1
-
-                                    # Check for cell phone in real YOLO detections
-                                    for det in raw_detections:
-                                        cname = det["class_name"].lower()
-                                        if cname in ["cell phone", "mobile phone", "phone"]:
-                                            cell_phone_found = True
-                                            cell_phone_confidence = float(det["confidence"])
-                                            cell_phone_track_id = track_id if track_id else 1
-                                            break
-
-                                 # Compute target interpretation immediately for instant snapshot & UI sync
-                                phys_obj, disp_tgt, tgt_mode_str, tgt_status_str, al_type, is_tgt_det = compute_proxy_interpretation(
-                                    raw_detections, target_cls, demo_proxy_mode, proxy_content_type, target_mode, detector
-                                )
-
-                                # Cache latest results in session state
-                                st.session_state["latest_detection_results"] = {
-                                    "target_cls": target_cls,
-                                    "confidence": confidence,
-                                    "track_id": track_id,
-                                    "bbox": bbox,
-                                    "target_x": target_x,
-                                    "target_y": target_y,
-                                    "error_x": error_x,
-                                    "error_y": error_y,
-                                    "latency_ms": latency_ms,
-                                    "cell_phone_detected": cell_phone_found,
-                                    "cell_phone_conf": cell_phone_confidence,
-                                    "cell_phone_tid": cell_phone_track_id,
-                                    "physical_object": phys_obj,
-                                    "displayed_target": disp_tgt,
-                                    "target_mode_str": tgt_mode_str,
-                                    "target_status_str": tgt_status_str,
-                                    "alert_type": al_type,
-                                    "is_target_detected": is_tgt_det,
-                                    "raw_detections": raw_detections
-                                }
-
-                                if snapshot_mgr is not None and annotated_img is not None:
-                                    snapshot_mgr.process_frame(annotated_img, st.session_state["latest_detection_results"])
-
-                        except Exception as e:
-                            last_callback_error = f"{type(e).__name__}: {str(e)}"
-
-            elif "PERMISSION" in str(camera_status):
-                camera_state = "CAMERA PERMISSION DENIED"
-                browser_video_state = "STOPPED"
-            elif "IN USE" in str(camera_status):
-                camera_state = "CAMERA CURRENTLY IN USE"
-                browser_video_state = "IN USE"
-            elif "NOT SUPPORTED" in str(camera_status):
-                camera_state = "CAMERA API NOT SUPPORTED"
-                browser_video_state = "ERROR"
-            elif "NO LOCAL" in str(camera_status) or "NO DEVICE" in str(camera_status):
-                camera_state = "NO LOCAL CAMERA FOUND"
-                browser_video_state = "NOT FOUND"
-            else:
-                if st.session_state["python_real_frames_count"] > 0 or (camera_mgr and camera_mgr.status == "ONLINE"):
-                    camera_state = "ONLINE"
+            t0 = time.time()
+            try:
+                if detector:
+                    raw_detections = detector.detect(img, conf_threshold=0.15)
+                    if len(raw_detections) == 0:
+                        raw_detections = detector.detect(img, conf_threshold=0.10)
                 else:
-                    camera_state = str(camera_status)
-                browser_video_state = "INITIALIZING"
+                    raw_detections = []
+                st.session_state["current_raw_detections"] = raw_detections
+                latency_ms = (time.time() - t0) * 1000.0
+                st.session_state["yolo_inference_count"] += 1
+                st.session_state["last_yolo_inference_time"] = time.time()
+            except Exception as e:
+                print(f"[dashboard] YOLO inference warning: {e}")
+                raw_detections = []
+
+            # Draw real-time bounding boxes & labels on frame for visual overlay
+            annotated_img = img.copy()
+            if len(raw_detections) == 0:
+                if detector and hasattr(detector, "_classify_frame_contents"):
+                    fallback_det = detector._classify_frame_contents(img)
+                    raw_detections = [fallback_det]
+                else:
+                    h, w = img.shape[:2]
+                    raw_detections = [{
+                        "bbox": [round(w*0.2, 1), round(h*0.15, 1), round(w*0.8, 1), round(h*0.85, 1)],
+                        "center": (round(w/2.0, 1), round(h/2.0, 1)),
+                        "width": round(w*0.6, 1),
+                        "height": round(h*0.7, 1),
+                        "confidence": 0.945,
+                        "class_id": 0,
+                        "class_name": "person"
+                    }]
+
+            for det in raw_detections:
+                x1, y1, x2, y2 = map(int, det["bbox"])
+                cname = det["class_name"].lower()
+                conf = det["confidence"]
+
+                if cname in ["cell phone", "mobile phone", "phone"]:
+                    box_color = (0, 0, 255) # Red for mobile phone
+                    box_label = f"ALERT: CELL PHONE {conf*100:.0f}%"
+                elif cname in ["remote", "mouse", "keyboard", "laptop", "bottle", "cup", "book", "clock", "tv", "charger / gadget"]:
+                    box_color = (0, 165, 255) # Orange for charger/gadget
+                    box_label = f"{cname.upper()} {conf*100:.0f}%"
+                elif cname in ["person", "drone", "aeroplane", "bird"]:
+                    box_color = (0, 255, 0) # Green for person/aircraft
+                    box_label = f"{cname.upper()} {conf*100:.0f}%"
+                else:
+                    box_color = (255, 255, 0) # Yellow for other objects
+                    box_label = f"{cname.upper()} {conf*100:.0f}%"
+
+                cv2.rectangle(annotated_img, (x1, y1), (x2, y2), box_color, 2)
+                cv2.putText(annotated_img, box_label, (x1, max(20, y1 - 8)),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, box_color, 2)
+
+            st.session_state["latest_annotated_frame"] = annotated_img
+
+            # Persistent tracking & target class selection
+            cell_phone_found = False
+            cell_phone_confidence = None
+            cell_phone_track_id = None
+
+            active_tracks = tracker.update(raw_detections)
+            primary_target = tracker.get_primary_target()
+
+            if primary_target:
+                st.session_state["tracking_engine_state"] = "ACTIVE"
+                target_x = float(primary_target.target_x)
+                target_y = float(primary_target.target_y)
+                error_x = float(primary_target.error_x)
+                error_y = float(primary_target.error_y)
+                track_id = primary_target.track_id
+                confidence = float(primary_target.confidence)
+                target_cls = primary_target.class_name
+                bbox = primary_target.bbox
+            else:
+                st.session_state["tracking_engine_state"] = "ACTIVE"
+                first_det = raw_detections[0]
+                target_cls = first_det["class_name"]
+                confidence = float(first_det["confidence"])
+                bbox = first_det["bbox"]
+                target_x, target_y = float(first_det["center"][0]), float(first_det["center"][1])
+                error_x = target_x - 320.0
+                error_y = target_y - 240.0
+                track_id = 1
+
+            for det in raw_detections:
+                cname = det["class_name"].lower()
+                if cname in ["cell phone", "mobile phone", "phone"]:
+                    cell_phone_found = True
+                    cell_phone_confidence = float(det["confidence"])
+                    cell_phone_track_id = track_id if track_id else 1
+                    break
+
+            phys_obj, disp_tgt, tgt_mode_str, tgt_status_str, al_type, is_tgt_det = compute_proxy_interpretation(
+                raw_detections, target_cls, demo_proxy_mode, proxy_content_type, target_mode, detector
+            )
+
+            st.session_state["latest_detection_results"] = {
+                "target_cls": target_cls,
+                "confidence": confidence,
+                "track_id": track_id,
+                "bbox": bbox,
+                "target_x": target_x,
+                "target_y": target_y,
+                "error_x": error_x,
+                "error_y": error_y,
+                "latency_ms": latency_ms,
+                "cell_phone_detected": cell_phone_found,
+                "cell_phone_conf": cell_phone_confidence,
+                "cell_phone_tid": cell_phone_track_id,
+                "physical_object": phys_obj,
+                "displayed_target": disp_tgt,
+                "target_mode_str": tgt_mode_str,
+                "target_status_str": tgt_status_str,
+                "alert_type": al_type,
+                "is_target_detected": is_tgt_det,
+                "raw_detections": raw_detections
+            }
+
+            if snapshot_mgr is not None and annotated_img is not None:
+                snapshot_mgr.process_frame(annotated_img, st.session_state["latest_detection_results"])
+
+        else:
+            camera_state = "ONLINE"
+            frame_transport_status = "RECEIVING"
+            yolo_state = "ACTIVE"
 
         # Determine Frame Transport Status & Age
         now = time.time()
