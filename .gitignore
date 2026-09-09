@@ -1,5 +1,24 @@
+# Python bytecode & cache
 __pycache__/
-*.pyc
-*.tmp
-detection_snapshots/
+*.py[cod]
+*$py.class
+*.so
 
+# Environments
+.venv/
+venv/
+ENV/
+env/
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Operating System
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Large model weights (keep lightweight default weights if needed, or track yolo26n.pt)
+*.onnx
+*.engine
+*.hef

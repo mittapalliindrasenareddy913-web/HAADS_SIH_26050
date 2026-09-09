@@ -1,70 +1,38 @@
-# Wokwi Hardware Simulation Setup & Fix Guide (HAADS SIH 26050)
+# HAADS — Wokwi ESP32 Hardware Simulation Suite
 
-This directory contains the virtual electronics simulation files for the **High Altitude Performance Optimization and Robust Design of Anti-Drone System**.
-
----
-
-## 🛠️ Resolving "ESP32Servo.h: No such file or directory" in Wokwi
-
-Wokwi requires external Arduino libraries to be registered in `libraries.txt` or via the **Library Manager** tab.
-
-### Method 1: Create `libraries.txt` in Wokwi (Recommended)
-In the Wokwi editor:
-1. Click the **+ New File** button (top left of the code panel).
-2. Name the file: `libraries.txt`
-3. Copy and paste the following 4 lines:
-```text
-ESP32Servo
-Adafruit MPU6050
-Adafruit Unified Sensor
-Adafruit BME280 Library
-```
-
-### Method 2: Use Wokwi Library Manager Tab
-1. Click the **Library Manager** tab (`+` icon next to files in Wokwi).
-2. Search and click **Add** for:
-   - `ESP32Servo`
-   - `Adafruit MPU6050`
-   - `Adafruit Unified Sensor`
-   - `Adafruit BME280 Library`
+**Project Name**: HAADS (High-Altitude Ruggedized Anti-Drone Detection & Precision Tracking System)  
+**SIH Problem Statement ID**: 26050  
+**Team Name**: DEVOPS  
 
 ---
 
-## 📐 Circuit Schematic (`diagram.json`)
+## 1. Overview
 
-Component list & GPIO pins:
-- **ESP32 DevKit V1**
-- **MPU6050 IMU**: I2C (SDA -> GPIO 21, SCL -> GPIO 22)
-- **BME280 Sensor**: I2C (SDA -> GPIO 21, SCL -> GPIO 22)
-- **Temperature Potentiometer**: Analog -> GPIO 34
-- **Pressure Potentiometer**: Analog -> GPIO 35
-- **Wind Speed Potentiometer**: Analog -> GPIO 32
-- **Vibration Potentiometer**: Analog -> GPIO 33
-- **Pan Servo**: PWM -> GPIO 26
-- **Tilt Servo**: PWM -> GPIO 27
+The `wokwi/` directory contains the complete Wokwi ESP32 hardware simulation suite for real-time testing of sensors, actuators, and MQTT telemetry communication with the Streamlit edge dashboard.
 
 ---
 
-## 🖥️ Expected Serial Telemetry Output
+## 2. File Inventory
 
-When the Wokwi simulation starts, the Serial Monitor (115200 baud) will display:
+- `diagram.json`: Complete Wokwi graphical wiring diagram (ESP32 DevKit V1 + MPU6050 + BME280 + 4 Potentiometers + 2 Servos + Buzzer).
+- `wokwi.ino`: Arduino C++ firmware for ESP32 with MQTT telemetry publishing and PWM servo driving.
+- `libraries.txt`: Required Wokwi Arduino libraries (`Adafruit BME280`, `Adafruit MPU6050`, `ESP32Servo`, `PubSubClient`, `ArduinoJson`).
 
-```text
-==============================================
-HAADS WOKWI HARDWARE SIMULATION
-==============================================
-[ESP32] MPU6050 initialized successfully.
-[ESP32] BME280 initialized successfully.
-[ESP32] Pan Servo attached to GPIO 26.
-[ESP32] Tilt Servo attached to GPIO 27.
+---
 
-HAADS WOKWI HARDWARE SIMULATION TELEMETRY
-Temperature: 20.0 C
-Pressure: 950.0 hPa
-Wind: 5.0 km/h
-Vibration: LOW
-IMU (MPU6050): OK [Ax:0.01, Ay:0.02, Az:9.81]
-BME280: OK
-Pan Servo Angle: 90 deg
-Tilt Servo Angle: 90 deg
-```
+## 3. How to Run Wokwi Simulation
+
+1. Open [Wokwi.com](https://wokwi.com/) in your web browser.
+2. Create a new **ESP32** project.
+3. Replace the code in `sketch.ino` with the contents of `wokwi/wokwi.ino`.
+4. Replace `diagram.json` with `wokwi/diagram.json`.
+5. Add the libraries from `wokwi/libraries.txt` in the Library Manager tab.
+6. Click **Start Simulation** (Play button).
+7. The ESP32 connects to Wi-Fi (`Wokwi-GUEST`) and publishes MQTT sensor telemetry to topic `haads/sih26050/telemetry` on public broker `test.mosquitto.org:1883`.
+8. The Streamlit dashboard (`app/app.py`) automatically detects incoming heartbeats and transitions hardware link status to `WOKWI_ONLINE`.
+
+---
+
+## 4. Hardware Pinout Reference
+
+See [hardware/wiring.md](../hardware/wiring.md) for full GPIO pinout details.

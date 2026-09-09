@@ -48,11 +48,13 @@ class YOLO26nDetector:
             return
 
         try:
-            base_dir = os.path.dirname(os.path.abspath(__file__))
+            app_dir = os.path.dirname(os.path.abspath(__file__))
+            root_dir = os.path.dirname(app_dir)
+            models_dir = os.path.join(root_dir, "models")
             
             # Check if custom drone weights exist first
             if custom_weights_path:
-                abs_custom = custom_weights_path if os.path.isabs(custom_weights_path) else os.path.join(base_dir, custom_weights_path)
+                abs_custom = custom_weights_path if os.path.isabs(custom_weights_path) else os.path.join(root_dir, custom_weights_path)
                 if os.path.exists(abs_custom):
                     print(f"[YOLO26nDetector] Loading custom drone model from: {abs_custom}")
                     self.model = YOLO(abs_custom)
@@ -60,20 +62,26 @@ class YOLO26nDetector:
                     self.model_loaded = True
                     return
 
-            # Try loading yolo26n or base nano model (yolov8n / yolo11n) with absolute path resolution first
-            weights_to_try = ["yolo26n.pt", "yolov8n.pt", "yolo11n.pt"]
-            for weight in weights_to_try:
-                try:
-                    abs_weight = os.path.join(base_dir, weight)
-                    weight_target = abs_weight if os.path.exists(abs_weight) else weight
-                    print(f"[YOLO26nDetector] Attempting to load weights: {weight_target}...")
-                    self.model = YOLO(weight_target)
-                    self.model_loaded = True
-                    print(f"[YOLO26nDetector] Successfully loaded {weight} engine.")
-                    return
-                except Exception as e:
-                    print(f"[YOLO26nDetector] Could not load {weight}: {e}")
-                    continue
+            # Weight locations to try: models/yolo26n.pt, root/yolo26n.pt, app/yolo26n.pt
+            candidate_paths = [
+                os.path.join(models_dir, "yolo26n.pt"),
+                os.path.join(root_dir, "yolo26n.pt"),
+                os.path.join(app_dir, "yolo26n.pt"),
+                "yolo26n.pt",
+                "yolov8n.pt"
+            ]
+
+            for weight_target in candidate_paths:
+                if os.path.exists(weight_target) or not os.path.isabs(weight_target):
+                    try:
+                        print(f"[YOLO26nDetector] Attempting to load weights: {weight_target}...")
+                        self.model = YOLO(weight_target)
+                        self.model_loaded = True
+                        print(f"[YOLO26nDetector] Successfully loaded {weight_target} engine.")
+                        return
+                    except Exception as e:
+                        print(f"[YOLO26nDetector] Could not load {weight_target}: {e}")
+                        continue
 
             # Fallback to YOLO("yolov8n.pt") direct stock loader
             try:

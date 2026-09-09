@@ -12,10 +12,12 @@ SYSTEM_OBJECTIVE = "Environmental compensation and robust precision tracking for
 SYSTEM_MODE = "ACADEMIC_ENGINEERING_PROTOTYPE"
 
 # Base Paths
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-MODELS_DIR = os.path.join(BASE_DIR, "models")
-DATA_DIR = os.path.join(BASE_DIR, "data")
-SYSTEM_DATA_FILE = os.path.join(BASE_DIR, "system_data.json")
+APP_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(APP_DIR)
+BASE_DIR = APP_DIR
+MODELS_DIR = os.path.join(PROJECT_ROOT, "models")
+DATA_DIR = os.path.join(PROJECT_ROOT, "data")
+SYSTEM_DATA_FILE = os.path.join(PROJECT_ROOT, "system_data.json")
 
 # Model Configuration
 PRIMARY_MODEL_NAME = "YOLO26n Edge AI — Object Detection & Tracking"

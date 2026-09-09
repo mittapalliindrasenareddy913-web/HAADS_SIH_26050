@@ -14,12 +14,17 @@ os.environ["MKL_NUM_THREADS"] = "1"
 os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
 os.environ["NUMEXPR_NUM_THREADS"] = "1"
 
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+APP_DIR = os.path.join(PROJECT_ROOT, "app")
+if APP_DIR not in sys.path:
+    sys.path.insert(0, APP_DIR)
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(1, PROJECT_ROOT)
+
 import time
 import numpy as np
 import cv2_wrapper as cv2
 cv2.setNumThreads(1)
-
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from camera import CameraManager
 from detector import YOLO26nDetector

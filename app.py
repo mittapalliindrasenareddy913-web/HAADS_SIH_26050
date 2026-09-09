@@ -1,101 +1,30 @@
 """
-HAADS SIH 26050 - Main Application Orchestrator
-Entry point for Streamlit web server. Initializes camera, YOLO26n Edge AI, tracker,
-environmental simulator, compensation engine, performance engine, health monitor,
-and Wokwi hardware interface abstraction.
+HAADS SIH 26050 - Main Application Launcher
+Root entry point for Streamlit web server (compatible with Streamlit Cloud auto-deployment).
+Initializes module path environment and delegates execution to app/app.py.
 """
 
-import sys
 import os
+import sys
 
 # Prevent OpenBLAS / PyTorch / OpenCV thread allocation errors
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+os.environ["NUMEXPR_NUM_THREADS"] = "1"
 
-# Import cv2_wrapper FIRST to patch sys.modules['cv2'] before ultralytics or camera modules load
-import cv2_wrapper as cv2
+# Ensure app directory and project root are in sys.path
+PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
+APP_DIR = os.path.join(PROJECT_ROOT, "app")
 
-import streamlit as st
+if APP_DIR not in sys.path:
+    sys.path.insert(0, APP_DIR)
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(1, PROJECT_ROOT)
 
-# Add project root directory to path
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-
-import config
-from camera import CameraManager
-from detector import YOLO26nDetector
-from tracker import PersistentTracker
-from environment import EnvironmentSimulator
-from compensation import EnvironmentalCompensationEngine
-from performance import PerformanceEngine
-from health_monitor import HealthMonitor
-from hardware_interface import HardwareInterface
-from data_manager import SystemDataManager
-from snapshot_manager import SnapshotManager
-from dashboard import render_dashboard
-
-
-@st.cache_resource
-def load_ai_and_camera():
-    """Caches heavy resources (Webcam and YOLO26n Edge AI engine)."""
-    camera_mgr = CameraManager(camera_index=config.DEFAULT_CAMERA_INDEX)
-    camera_mgr.start()
-
-    detector = YOLO26nDetector(
-        model_name="yolo26n",
-        custom_weights_path=config.CUSTOM_DRONE_MODEL_PATH,
-        conf_threshold=config.CONFIDENCE_THRESHOLD
-    )
-
-    tracker = PersistentTracker(
-        max_distance=100,
-        max_lost=10,
-        frame_width=config.FRAME_WIDTH,
-        frame_height=config.FRAME_HEIGHT
-    )
-
-    return camera_mgr, detector, tracker
-
-
-def main():
-    st.set_page_config(
-        page_title="HAADS - High Altitude Edge AI System",
-        page_icon="🎯",
-        layout="wide",
-        initial_sidebar_state="expanded"
-    )
-
-    camera_mgr, detector, tracker = load_ai_and_camera()
-
-    # Session State management for dynamic simulation engines
-    if "env_sim" not in st.session_state:
-        st.session_state["env_sim"] = EnvironmentSimulator()
-    if "comp_engine" not in st.session_state:
-        st.session_state["comp_engine"] = EnvironmentalCompensationEngine()
-    if "perf_engine" not in st.session_state:
-        st.session_state["perf_engine"] = PerformanceEngine()
-    if "health_mon" not in st.session_state:
-        st.session_state["health_mon"] = HealthMonitor()
-    if "hw_interface" not in st.session_state:
-        st.session_state["hw_interface"] = HardwareInterface(mode="WOKWI")
-    if "data_mgr" not in st.session_state:
-        st.session_state["data_mgr"] = SystemDataManager()
-    if "snapshot_mgr" not in st.session_state:
-        st.session_state["snapshot_mgr"] = SnapshotManager()
-
-    render_dashboard(
-        camera_mgr,
-        detector,
-        tracker,
-        st.session_state["env_sim"],
-        st.session_state["comp_engine"],
-        st.session_state["perf_engine"],
-        st.session_state["health_mon"],
-        st.session_state["hw_interface"],
-        st.session_state["data_mgr"],
-        st.session_state["snapshot_mgr"]
-    )
-
+from app import main
 
 if __name__ == "__main__":
     main()
+
