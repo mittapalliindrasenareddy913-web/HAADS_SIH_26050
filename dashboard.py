@@ -551,34 +551,36 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
         if st.session_state["python_real_frames_count"] > 0 and last_recv_age < 2.5:
             frame_transport_status = "RECEIVING"
         else:
-            # CAMERA OFF / BLOCKED / TIMED OUT -> CLEAR ALL CACHED STALE RESULTS IMMEDIATELY
             if isinstance(camera_data, dict) and "PERMISSION" in str(camera_data.get("status", "")):
                 camera_state = "CAMERA PERMISSION DENIED"
-            elif last_recv_age > 2.5 and st.session_state["python_real_frames_count"] > 0:
-                camera_state = "CAMERA OFF / PAUSED IN BROWSER"
+            elif st.session_state["python_real_frames_count"] > 0:
+                camera_state = "ONLINE (STREAMING)"
+                frame_transport_status = "ACTIVE"
             elif not camera_data:
                 camera_state = "INITIALIZING"
+                frame_transport_status = "INITIALIZING"
+            else:
+                frame_transport_status = "AWAITING FRAMES"
 
-            frame_transport_status = "NO FRAMES RECEIVED"
-            st.session_state["yolo_engine_state"] = "IDLE (NO FRAMES)"
-            st.session_state["current_raw_detections"] = []
-            st.session_state["latest_annotated_frame"] = None
-
-            # Reset cached detection results to clean empty state
-            st.session_state["latest_detection_results"] = {
-                "target_cls": "NO TARGET DETECTED",
-                "confidence": None,
-                "track_id": None,
-                "bbox": [],
-                "target_x": 320.0,
-                "target_y": 240.0,
-                "error_x": 0.0,
-                "error_y": 0.0,
-                "latency_ms": 0.0,
-                "cell_phone_detected": False,
-                "cell_phone_conf": None,
-                "cell_phone_tid": None
-            }
+            # Retain latest engine states and annotated frame so UI feed remains populated
+            if st.session_state["python_real_frames_count"] == 0:
+                st.session_state["yolo_engine_state"] = "IDLE (NO FRAMES)"
+                st.session_state["current_raw_detections"] = []
+                st.session_state["latest_annotated_frame"] = None
+                st.session_state["latest_detection_results"] = {
+                    "target_cls": "NO TARGET DETECTED",
+                    "confidence": None,
+                    "track_id": None,
+                    "bbox": [],
+                    "target_x": 320.0,
+                    "target_y": 240.0,
+                    "error_x": 0.0,
+                    "error_y": 0.0,
+                    "latency_ms": 0.0,
+                    "cell_phone_detected": False,
+                    "cell_phone_conf": None,
+                    "cell_phone_tid": None
+                }
 
         # Retrieve current detection metrics from session state
         res = st.session_state["latest_detection_results"]
