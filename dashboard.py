@@ -438,9 +438,9 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
                         "center": (round(w/2.0, 1), round(h/2.0, 1)),
                         "width": round(w*0.6, 1),
                         "height": round(h*0.7, 1),
-                        "confidence": 0.945,
-                        "class_id": 0,
-                        "class_name": "person"
+                        "confidence": 0.964,
+                        "class_id": 67,
+                        "class_name": "cell phone"
                     }]
 
             for det in raw_detections:
