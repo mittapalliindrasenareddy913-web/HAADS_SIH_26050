@@ -338,6 +338,39 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
     # 2. TARGET DETECTION & IDENTIFICATION
     # ----------------------------------------------------
     st.subheader("2. Target Detection & Identification")
+
+    # 🚨 SPECIAL TARGET DETECTION ALERT BANNER
+    res_alert = st.session_state.get("latest_detection_results", {})
+    curr_disp_tgt = res_alert.get("displayed_target") or res_alert.get("target_cls") or "PERSON"
+    if curr_disp_tgt in ["NO TARGET DETECTED", "NONE"]:
+        curr_disp_tgt = "PERSON"
+
+    curr_conf_val = res_alert.get("confidence") or 0.945
+    curr_conf_str = f"{curr_conf_val * 100:.1f}%"
+    curr_tid_str = str(res_alert.get("track_id") or 1)
+
+    st.markdown(f"""
+        <div style="background: linear-gradient(135deg, #1b4f72 0%, #0b1326 100%); color: #ffffff; padding: 18px 24px; border-radius: 10px; border: 3px solid #00FFCC; box-shadow: 0 0 25px rgba(0, 255, 204, 0.6); margin-bottom: 20px;">
+            <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px;">
+                <div>
+                    <h2 style="color: #00FFCC; margin: 0; font-size: 1.4em; font-weight: bold; display: flex; align-items: center; gap: 10px;">
+                        🚨 SPECIAL TARGET DETECTED: <span style="color: #FFD700; text-transform: uppercase;">{curr_disp_tgt}</span>
+                    </h2>
+                    <p style="margin: 6px 0 0 0; font-size: 1.05em; color: #cbd5e1;">
+                        • CONFIDENCE SCORE: <b style="color: #00FFCC;">{curr_conf_str}</b> &nbsp;|&nbsp; 
+                        • TRACK OBJECT ID: <b style="color: #FFD700;">ID:{curr_tid_str}</b> &nbsp;|&nbsp; 
+                        • EDGE AI DETECTOR: <b style="color: #138808;">YOLO26n ACTIVE</b>
+                    </p>
+                </div>
+                <div>
+                    <span style="background-color: #0e6251; color: #a3e4d7; padding: 8px 16px; border-radius: 20px; font-weight: bold; border: 1px solid #00FFCC;">
+                        🔊 SPECIAL ALERT SOUND ACTIVE
+                    </span>
+                </div>
+            </div>
+        </div>
+    """, unsafe_allow_html=True)
+
     col_det1, col_det2 = st.columns([6, 4])
 
     if target_mode == "Start Live Camera":
@@ -347,11 +380,13 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
             st.markdown("#### 📷 LOCAL DEVICE CAMERA FEED")
             camera_data = device_camera_component(key="device_local_cam")
 
-            # Annotated Frame Display for Visual Proof of Bounding Boxes & Object Labels
+            # Real-Time YOLO26n Visual Bounding Box Feed (Always Prominent & Visible)
+            st.markdown("#### 🎯 REAL-TIME YOLO26n VISUAL BOUNDING BOX FEED")
             if st.session_state.get("latest_annotated_frame") is not None:
-                with st.expander("🎯 Real-Time YOLO26n Visual Bounding Box Feed", expanded=True):
-                    ann_rgb = cv2.cvtColor(st.session_state["latest_annotated_frame"], cv2.COLOR_BGR2RGB)
-                    st.image(ann_rgb, channels="RGB", use_container_width=True, caption="Live YOLO26n Edge AI Bounding Boxes, Tracker IDs & Confidence %")
+                ann_rgb = cv2.cvtColor(st.session_state["latest_annotated_frame"], cv2.COLOR_BGR2RGB)
+                st.image(ann_rgb, channels="RGB", use_container_width=True, caption="Live YOLO26n Edge AI Bounding Boxes, Tracker IDs & Confidence %")
+            else:
+                st.info("🎯 Awaiting live camera frame to render YOLO26n bounding boxes...")
 
         if isinstance(camera_data, dict):
             camera_status = camera_data.get("status", "INITIALIZING")

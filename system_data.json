@@ -1,5 +1,5 @@
 {
-  "timestamp": "2026-09-09 11:25:10",
+  "timestamp": "2026-09-09 15:13:07",
   "camera": {
     "status": "ONLINE",
     "device_label": "LOCAL DEVICE CAMERA",
@@ -97,7 +97,7 @@
         "message": "High structural vibration detected. High-frequency filtering active."
       }
     ],
-    "timestamp": "2026-09-09 11:25:10"
+    "timestamp": "2026-09-09 15:13:07"
   },
   "hardware": {
     "state": "WOKWI_ONLINE",
@@ -119,7 +119,7 @@
       "vibration": 0.5,
       "pan": 95,
       "tilt": 85,
-      "timestamp": 1788933310.063684
+      "timestamp": 1788946987.6808465
     },
     "pan_angle": 95,
     "tilt_angle": 85,
@@ -131,7 +131,7 @@
       "vibration": 0.5,
       "pan": 95,
       "tilt": 85,
-      "timestamp": 1788933310.063684,
+      "timestamp": 1788946987.6808465,
       "status": "online"
     }
   }
