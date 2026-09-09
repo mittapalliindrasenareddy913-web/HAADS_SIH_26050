@@ -57,58 +57,38 @@ def compute_proxy_interpretation(raw_dets, target_cls, demo_proxy_mode, proxy_co
 
     if has_phone_in_dets:
         physical_object = "CELL PHONE"
+        displayed_target = "CELL PHONE"
+        target_mode_str = "CELL PHONE DETECTION"
+        target_status_str = "PHYSICAL OBJECT DETECTED"
+        alert_type = "MOBILE_PHONE"
     elif has_person_in_dets:
         physical_object = "PERSON"
+        displayed_target = "PERSON"
+        target_mode_str = "DIRECT DETECTION"
+        target_status_str = "ACTIVE"
+        alert_type = "GENERIC_OBJECT"
     elif len(raw_dets) > 0:
-        physical_object = raw_dets[0]["class_name"].upper()
+        first_cname = raw_dets[0]["class_name"].upper()
+        physical_object = first_cname
+        displayed_target = first_cname
+        target_mode_str = "DIRECT DETECTION"
+        target_status_str = "ACTIVE"
+        alert_type = "GENERIC_OBJECT"
     else:
         physical_object = "NONE"
+        displayed_target = "NO TARGET DETECTED"
+        target_mode_str = "NORMAL"
+        target_status_str = "READY"
+        alert_type = "NONE"
 
     supports_drone = detector.supports_drone_class() if detector else False
     has_genuine_drone = any(d["class_name"].lower() in ["drone", "uav", "quadcopter"] for d in raw_dets) or ("drone" in str(target_cls).lower() and supports_drone) or ("synthetic" in str(target_cls).lower())
-    has_person_det = any(d["class_name"].lower() == "person" for d in raw_dets) or ("person" in str(target_cls).lower())
 
     if has_genuine_drone:
         displayed_target = "DRONE"
         target_mode_str = "REAL EDGE AI DRONE DETECTION"
         target_status_str = "VERIFIED PHYSICAL TARGET"
         alert_type = "REAL_DRONE"
-
-    elif demo_proxy_mode and len(raw_dets) > 0 and target_mode == "Start Live Camera":
-        target_status_str = "SIMULATION / DEMONSTRATION ONLY"
-
-        if has_person_det or "Person" in str(proxy_content_type):
-            displayed_target = "PERSON"
-            target_mode_str = "PERSON-PROXY DEMONSTRATION"
-            alert_type = "PERSON_PROXY"
-        elif "Drone" in str(proxy_content_type) or has_genuine_drone:
-            displayed_target = "DRONE"
-            target_mode_str = "DRONE-PROXY DEMONSTRATION"
-            alert_type = "DRONE_PROXY"
-        else:
-            first_cname = raw_dets[0]["class_name"].upper() if len(raw_dets) > 0 else "TARGET"
-            displayed_target = first_cname
-            target_mode_str = f"{first_cname}-PROXY DEMONSTRATION"
-            alert_type = "OTHER_PROXY"
-
-    elif has_phone_in_dets:
-        displayed_target = "MOBILE DEVICE"
-        target_mode_str = "MOBILE DEVICE DETECTION"
-        target_status_str = "PHYSICAL OBJECT DETECTED"
-        alert_type = "MOBILE_PHONE"
-
-    elif len(raw_dets) > 0:
-        first_det = raw_dets[0]
-        displayed_target = first_det["class_name"].upper()
-        target_mode_str = "DIRECT DETECTION"
-        target_status_str = "ACTIVE"
-        alert_type = "GENERIC_OBJECT"
-
-    else:
-        displayed_target = "NO TARGET DETECTED"
-        target_mode_str = "NORMAL"
-        target_status_str = "READY"
-        alert_type = "NONE"
 
     is_target_detected = (alert_type != "NONE")
     return physical_object, displayed_target, target_mode_str, target_status_str, alert_type, is_target_detected
@@ -873,6 +853,7 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
 
             # 🔊 AUDIBLE BROWSER BUZZER BEEP SOUND VIA WEB AUDIO API
             st.components.v1.html("""
+                <div style="display:none;">
                 <script>
                 (function() {
                     try {
@@ -892,7 +873,8 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
                     } catch(e) {}
                 })();
                 </script>
-            """, height=0, width=0)
+                </div>
+            """, height=1, width=1)
 
         # ----------------------------------------------------
         # 📸 STORED DETECTION SNAPSHOTS GALLERY (1-HOUR AUTO CLEANUP)
@@ -901,13 +883,14 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
         st.markdown("##### 📸 Stored Detection Snapshots (1-Hr Auto-Cleanup)")
         if snapshot_mgr is not None:
             recent_snaps = snapshot_mgr.get_recent_snapshots(max_count=4)
-            if recent_snaps:
+            valid_snaps = [s for s in recent_snaps if os.path.exists(s["img_path"])]
+            if valid_snaps:
                 snap_cols = st.columns(2)
-                for idx, snap in enumerate(recent_snaps):
+                for idx, snap in enumerate(valid_snaps):
                     with snap_cols[idx % 2]:
                         try:
                             s_img = cv2.imread(snap["img_path"])
-                            if s_img is not None:
+                            if s_img is not None and getattr(s_img, 'size', 0) > 0:
                                 s_rgb = cv2.cvtColor(s_img, cv2.COLOR_BGR2RGB)
                                 disp_t = snap.get("displayed_target", "TARGET")
                                 ts_t = snap.get("timestamp", "")

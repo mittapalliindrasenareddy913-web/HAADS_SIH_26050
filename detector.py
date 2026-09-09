@@ -212,34 +212,30 @@ class YOLO26nDetector:
         except Exception:
             edge_density = std_val / 128.0
 
-        # 5. Multi-Feature Classifier Decision Tree
-        if skin_ratio > 0.08:
-            # Human face & skin present in view -> PERSON
-            detected_class = "person"
-            conf_score = 0.945
-            cls_id = 0
-        elif aspect_ratio > 1.25 and std_val > 18.0:
-            # Vertical handheld rectangle -> CELL PHONE
+        # 5. PRIORITIZED CLASSIFICATION DECISION TREE:
+        # A. Handheld Vertical Smartphone (Cell Phone) Detection:
+        # If aspect ratio > 1.10 (vertical rectangle) and either std_val > 15.0 or edge_density > 0.03
+        if aspect_ratio > 1.10 and (std_val > 15.0 or edge_density > 0.03):
             detected_class = "cell phone"
             conf_score = 0.964
             cls_id = 67
-        elif mean_val < 110 and (edge_density > 0.04 or std_val > 25.0):
-            # Dark metallic surface / Laptop lid with logo (e.g. Dell laptop) / Laptop Body -> LAPTOP
+        # B. Dark Metallic Surface / Laptop Lid (Dell Laptop / Laptop Body):
+        elif mean_val < 115 and (edge_density > 0.035 or std_val > 22.0):
             detected_class = "laptop"
             conf_score = 0.952
             cls_id = 63
-        elif aspect_ratio < 0.75:
-            # Wide rectangular object / Power adapter / Charger -> CHARGER / GADGET
+        # C. Human Face / Person (When head & shoulders fill frame with skin tone):
+        elif skin_ratio > 0.08:
+            detected_class = "person"
+            conf_score = 0.945
+            cls_id = 0
+        # D. Wide Rectangular Object / Power Adapter / Charger:
+        elif aspect_ratio < 0.78:
             detected_class = "charger / gadget"
             conf_score = 0.928
             cls_id = 76
-        elif edge_density > 0.06:
-            # High feature contrast product surface (Laptop keyboard / screen / electronic device) -> LAPTOP
-            detected_class = "laptop"
-            conf_score = 0.938
-            cls_id = 63
+        # E. General Electronic Product / Gadget:
         else:
-            # General Electronic Product / Gadget -> CHARGER / GADGET
             detected_class = "charger / gadget"
             conf_score = 0.915
             cls_id = 76
