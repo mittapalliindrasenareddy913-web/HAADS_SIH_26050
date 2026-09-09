@@ -33,9 +33,6 @@ except (ImportError, Exception) as err:
     _NATIVE_CV2 = False
     cv2 = None
 
-# Inject fallback wrapper into sys.modules if native cv2 is unavailable
-if not _NATIVE_CV2:
-    sys.modules['cv2'] = sys.modules[__name__]
 
 
 def imshow(winname, mat):
@@ -289,3 +286,9 @@ def __getattr__(name):
     def dummy_func(*args, **kwargs):
         return None
     return dummy_func
+
+
+# Inject fallback wrapper into sys.modules ONLY AFTER all functions, constants and classes are fully defined!
+if not _NATIVE_CV2:
+    sys.modules['cv2'] = sys.modules[__name__]
+

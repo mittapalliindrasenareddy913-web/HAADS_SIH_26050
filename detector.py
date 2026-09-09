@@ -20,7 +20,8 @@ try:
     torch.set_num_threads(1)
     from ultralytics import YOLO
     ULTRALYTICS_AVAILABLE = True
-except ImportError:
+except (ImportError, AttributeError, Exception) as err:
+    print(f"[YOLO26nDetector] Ultralytics import warning: {err}")
     ULTRALYTICS_AVAILABLE = False
 
 
