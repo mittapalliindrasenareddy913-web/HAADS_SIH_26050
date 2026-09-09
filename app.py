@@ -23,8 +23,10 @@ if APP_DIR not in sys.path:
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(1, PROJECT_ROOT)
 
-from app import main
+import runpy
+
+TARGET_SCRIPT = os.path.join(APP_DIR, "app.py")
 
 if __name__ == "__main__":
-    main()
+    runpy.run_path(TARGET_SCRIPT, run_name="__main__")
 

@@ -22,3 +22,6 @@ desktop.ini
 *.onnx
 *.engine
 *.hef
+
+# Runtime artifacts & snapshots
+detection_snapshots/
