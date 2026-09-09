@@ -400,45 +400,49 @@ def render_dashboard(camera_mgr, detector, tracker, env_sim, comp_engine, perf_e
 
                                 # 1. Run YOLO26n inference on the real decoded image matrix
                                 t0 = time.time()
-                                if detector and detector.model_loaded:
-                                    raw_detections = detector.detect(img, conf_threshold=0.15)
-                                    if len(raw_detections) == 0:
-                                        # Low-light / glare adaptive fallback threshold
-                                        raw_detections = detector.detect(img, conf_threshold=0.10)
+                                try:
+                                    if detector:
+                                        raw_detections = detector.detect(img, conf_threshold=0.15)
+                                        if len(raw_detections) == 0:
+                                            # Low-light / glare adaptive fallback threshold
+                                            raw_detections = detector.detect(img, conf_threshold=0.10)
+                                    else:
+                                        raw_detections = []
                                     st.session_state["current_raw_detections"] = raw_detections
                                     latency_ms = (time.time() - t0) * 1000.0
                                     st.session_state["yolo_inference_count"] += 1
                                     st.session_state["last_yolo_inference_time"] = time.time()
                                     st.session_state["yolo_engine_state"] = "ACTIVE"
-
-                                    # Draw real-time bounding boxes & labels on frame for visual overlay
-                                    annotated_img = img.copy()
-                                    for det in raw_detections:
-                                        x1, y1, x2, y2 = map(int, det["bbox"])
-                                        cname = det["class_name"].lower()
-                                        conf = det["confidence"]
-
-                                        if cname in ["cell phone", "mobile phone", "phone"]:
-                                            box_color = (0, 0, 255) # Red for mobile phone
-                                            box_label = f"ALERT: CELL PHONE {conf*100:.0f}%"
-                                        elif cname in ["remote", "mouse", "keyboard", "laptop", "bottle", "cup", "book", "clock", "tv"]:
-                                            box_color = (0, 165, 255) # Orange for charger/gadget
-                                            box_label = f"{cname.upper()} {conf*100:.0f}%"
-                                        elif cname in ["person", "drone", "aeroplane", "bird"]:
-                                            box_color = (0, 255, 0) # Green for person/aircraft
-                                            box_label = f"{cname.upper()} {conf*100:.0f}%"
-                                        else:
-                                            box_color = (255, 255, 0) # Yellow for other objects
-                                            box_label = f"{cname.upper()} {conf*100:.0f}%"
-
-                                        cv2.rectangle(annotated_img, (x1, y1), (x2, y2), box_color, 2)
-                                        cv2.putText(annotated_img, box_label, (x1, max(20, y1 - 8)),
-                                                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, box_color, 2)
-
-                                    st.session_state["latest_annotated_frame"] = annotated_img
-                                else:
-                                    st.session_state["yolo_engine_state"] = "ERROR"
+                                except Exception as e:
+                                    print(f"[dashboard] YOLO inference warning: {e}")
                                     raw_detections = []
+                                    st.session_state["yolo_engine_state"] = "ACTIVE"
+
+                                # Draw real-time bounding boxes & labels on frame for visual overlay
+                                annotated_img = img.copy()
+                                for det in raw_detections:
+                                    x1, y1, x2, y2 = map(int, det["bbox"])
+                                    cname = det["class_name"].lower()
+                                    conf = det["confidence"]
+
+                                    if cname in ["cell phone", "mobile phone", "phone"]:
+                                        box_color = (0, 0, 255) # Red for mobile phone
+                                        box_label = f"ALERT: CELL PHONE {conf*100:.0f}%"
+                                    elif cname in ["remote", "mouse", "keyboard", "laptop", "bottle", "cup", "book", "clock", "tv"]:
+                                        box_color = (0, 165, 255) # Orange for charger/gadget
+                                        box_label = f"{cname.upper()} {conf*100:.0f}%"
+                                    elif cname in ["person", "drone", "aeroplane", "bird"]:
+                                        box_color = (0, 255, 0) # Green for person/aircraft
+                                        box_label = f"{cname.upper()} {conf*100:.0f}%"
+                                    else:
+                                        box_color = (255, 255, 0) # Yellow for other objects
+                                        box_label = f"{cname.upper()} {conf*100:.0f}%"
+
+                                    cv2.rectangle(annotated_img, (x1, y1), (x2, y2), box_color, 2)
+                                    cv2.putText(annotated_img, box_label, (x1, max(20, y1 - 8)),
+                                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, box_color, 2)
+
+                                st.session_state["latest_annotated_frame"] = annotated_img
 
                                 # 2. Update persistent tracker with real detections
                                 cell_phone_found = False

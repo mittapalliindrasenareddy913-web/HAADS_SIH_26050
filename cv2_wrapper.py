@@ -23,6 +23,11 @@ except (ImportError, Exception) as err:
     _NATIVE_CV2 = False
     cv2 = None
 
+# Inject fallback wrapper into sys.modules if native cv2 is unavailable
+if not _NATIVE_CV2:
+    sys.modules['cv2'] = sys.modules[__name__]
+
+
 
 def imdecode(buf, flags=1):
     if _NATIVE_CV2 and cv2 is not None:
