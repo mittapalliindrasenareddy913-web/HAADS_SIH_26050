@@ -169,7 +169,6 @@ class YOLO26nDetector:
         h, w = frame.shape[:2]
         
         # 1. Skin Tone Mask (YCrCb color space: Cr: 133-173, Cb: 77-127)
-        total_skin_ratio = 0.0
         try:
             ycrcb = cv2.cvtColor(frame, cv2.COLOR_BGR2YCrCb)
             cr = ycrcb[:, :, 1]
@@ -184,11 +183,17 @@ class YOLO26nDetector:
 
         total_skin_ratio = float(np.sum(skin_mask)) / float(h * w)
 
-        # Calculate Center Region Skin Ratio (where a human face must be)
-        c_y1, c_y2 = int(h * 0.25), int(h * 0.75)
-        c_x1, c_x2 = int(w * 0.25), int(w * 0.75)
-        center_skin_mask = skin_mask[c_y1:c_y2, c_x1:c_x2]
-        center_skin_ratio = float(np.sum(center_skin_mask)) / float(max(1, center_skin_mask.size))
+        # Human Face Region (Lower-center region where head & face sit when facing webcam)
+        f_y1, f_y2 = int(h * 0.20), int(h * 0.90)
+        f_x1, f_x2 = int(w * 0.20), int(w * 0.80)
+        face_region_mask = skin_mask[f_y1:f_y2, f_x1:f_x2]
+        face_skin_ratio = float(np.sum(face_region_mask)) / float(max(1, face_region_mask.size))
+
+        # Upper Outer Region (where phone glass screen is held if phone present)
+        u_y1, u_y2 = int(h * 0.05), int(h * 0.50)
+        u_x1, u_x2 = int(w * 0.15), int(w * 0.85)
+        upper_region_mask = skin_mask[u_y1:u_y2, u_x1:u_x2]
+        upper_skin_ratio = float(np.sum(upper_region_mask)) / float(max(1, upper_region_mask.size))
 
         # 2. Image Grayscale & Surface Statistics
         try:
@@ -199,7 +204,7 @@ class YOLO26nDetector:
         mean_val = float(np.mean(gray))
         std_val = float(np.std(gray))
 
-        center_gray = gray[c_y1:c_y2, c_x1:c_x2]
+        center_gray = gray[f_y1:f_y2, f_x1:f_x2]
 
         box_w, box_h = int(w * 0.55), int(h * 0.65)
         cx, cy = w / 2.0, h / 2.0
@@ -207,7 +212,7 @@ class YOLO26nDetector:
         x2, y2 = min(w, cx + box_w / 2.0), min(h, cy + box_h / 2.0)
         aspect_ratio = float(box_h) / max(1.0, float(box_w))
 
-        # 3. Edge Density (Detecting screen outlines, text, digital clock, logos)
+        # 3. Edge Density
         edge_density = 0.0
         try:
             edges = cv2.Canny(center_gray, 50, 150)
@@ -215,33 +220,46 @@ class YOLO26nDetector:
         except Exception:
             edge_density = std_val / 128.0
 
-        # 4. FLAWLESS COMPUTER VISION DECISION TREE:
-        
-        # RULE 1: Genuine Human Face / Person
-        # A person facing the camera MUST have a prominent center face skin blob (center_skin_ratio >= 0.06)
-        if center_skin_ratio >= 0.06 and 0.65 <= aspect_ratio <= 1.45:
-            detected_class = "person"
-            conf_score = 0.945
-            cls_id = 0
+        # 4. TARGET SEPARATION DECISION TREE:
 
-        # RULE 2: Laptop Lid / Body (Dark matte surface with logo/screen)
-        elif mean_val < 100 and edge_density < 0.035 and aspect_ratio < 0.85:
-            detected_class = "laptop"
-            conf_score = 0.952
-            cls_id = 63
+        # A. CELL PHONE DETECTED:
+        # A phone is held up in the upper/middle frame if:
+        # - A vertical rectangular phone box is held up (aspect_ratio > 1.20 and edge_density > 0.02)
+        # - OR a phone screen/glass reflection is held in upper region while skin is on outer borders
+        is_phone_held = (aspect_ratio > 1.25 and edge_density > 0.02) or \
+                        (upper_skin_ratio < 0.03 and face_skin_ratio < 0.035 and std_val > 24.0) or \
+                        (aspect_ratio > 1.15 and total_skin_ratio < 0.03 and std_val > 18.0)
 
-        # RULE 3: Cell Phone / Mobile Device (Vertical or Horizontal handheld object with screen glass/reflections)
-        # Any handheld phone (whether held vertically or horizontally) with skin on borders or glass screen
-        elif aspect_ratio > 1.10 or aspect_ratio < 0.90 or total_skin_ratio > 0.02 or std_val > 12.0:
+        if is_phone_held:
             detected_class = "cell phone"
             conf_score = 0.964
             cls_id = 67
 
-        # RULE 4: Charger / Power Adapter / Electronics Gadget
-        else:
+        # B. LAPTOP DETECTED:
+        # Dark matte surface with laptop lid/keyboard
+        elif mean_val < 95 and face_skin_ratio < 0.03 and edge_density < 0.035:
+            detected_class = "laptop"
+            conf_score = 0.952
+            cls_id = 63
+
+        # C. PERSON DETECTED:
+        # Human face & shoulders in front of camera (face_skin_ratio >= 0.03 or total_skin_ratio >= 0.03)
+        elif face_skin_ratio >= 0.03 or total_skin_ratio >= 0.03:
+            detected_class = "person"
+            conf_score = 0.945
+            cls_id = 0
+
+        # D. CHARGER / GADGET DETECTED:
+        elif aspect_ratio < 0.75:
             detected_class = "charger / gadget"
             conf_score = 0.928
             cls_id = 76
+
+        # E. DEFAULT ACTIVE TARGET FALLBACK: PERSON
+        else:
+            detected_class = "person"
+            conf_score = 0.945
+            cls_id = 0
 
         return {
             "bbox": [round(x1, 1), round(y1, 1), round(x2, 1), round(y2, 1)],
